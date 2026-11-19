@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { RenderedDocument } from '@/core/types'
+import type { RenderedDocument, WechatTemplateId } from '../../core/types'
 import type { StudioApi } from '@/app/use-studio'
 import { reasonOf } from '@/app/text'
 import { Icon } from '@/components/Icon'
@@ -33,10 +33,12 @@ export interface ArticleLayout {
   readonly tools?: ReactNode
   readonly article?: ReactNode
   readonly editing?: boolean
+  readonly templateBlockReason?: string | null
 }
 
 interface ArticleProps {
   readonly document: RenderedDocument
+  readonly template: WechatTemplateId | undefined
   readonly onEdit?: StudioApi['editBody']
   readonly onImageError?: (src: string) => void
   readonly hasPlatformEdits: boolean
@@ -139,8 +141,9 @@ function restoreReadingPosition(article: HTMLElement, position: LayoutPosition) 
   else if (position.top >= 0 && change !== 0) article.ownerDocument.defaultView?.scrollBy(0, change)
 }
 
-export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdits, onDiscard, focused, onFocusChange, renderLayout }: ArticleProps) {
-  const [editingHtml, setEditingHtml] = useState<string | null>(null)
+export function EditableArticle({ document, template, onEdit, onImageError, hasPlatformEdits, onDiscard, focused, onFocusChange, renderLayout }: ArticleProps) {
+  const [editSession, setEditSession] = useState<{ html: string; template: ArticleProps['template'] } | null>(null)
+  const [isComposing, setIsComposing] = useState(false)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [link, setLink] = useState<{ readonly range: Range; readonly url: string } | null>(null)
@@ -157,15 +160,34 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
   const endComposition = useRef<(() => void) | null>(null)
   const commanding = useRef(false)
   const lastHtml = useRef('')
-  const editing = editingHtml !== null && onEdit !== undefined
-  // Keep the initial markup for the lifetime of an edit session, even while temporarily read-only.
-  // Reapplying the latest HTML would destroy the browser's selection, composition and undo history.
-  const html = editingHtml ?? document.html
+  // Freeze the initial markup while editing. Applying a different template is the
+  // only in-session operation that replaces the markup and its native undo history.
+  if (editSession && editSession.template !== template) {
+    setEditSession({ html: document.html, template })
+    setTypography({ fontId: '', size: '' })
+    setError(null)
+  }
+  const hasEditSession = editSession !== null
+  const editing = hasEditSession && onEdit !== undefined
+  const html = editSession?.html ?? document.html
   const markup = useMemo(() => ({ __html: html }), [html])
+  const templateBlockReason = reading ? '图片正在读取，插入完成后再切换模板。'
+    : link ? '请先完成或取消链接编辑，再切换模板。'
+      : isComposing ? '请先结束正在输入的文字，再切换模板。' : null
 
   useLayoutEffect(() => {
     const article = canvas.current
-    if (!article || editingHtml === null) return
+    if (!article) return
+    caret.current = null
+    typographySelection.current = null
+    pickerRange.current = null
+    fontSizeHistory.clear()
+    lastHtml.current = article.innerHTML
+  }, [template, fontSizeHistory])
+
+  useLayoutEffect(() => {
+    const article = canvas.current
+    if (!article || !hasEditSession) return
     const position = layoutPosition.current
     layoutPosition.current = null
     if (article.getAttribute('contenteditable') === 'true') {
@@ -188,7 +210,7 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
       previewScroll(article)?.focus({ preventScroll: true })
     }
     if (position) restoreReadingPosition(article, position)
-  }, [editingHtml, focused])
+  }, [hasEditSession, focused])
 
   const refreshTypography = useCallback((article: HTMLElement, range: Range | null) => {
     if (composing.current) return
@@ -251,12 +273,12 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
     const article = canvas.current
     if (!article || !onFocusChange || (enabled && !onEdit)) return
     layoutPosition.current = capturePosition(article, caret.current)
-    if (enabled && editingHtml === null) {
+    if (enabled && !hasEditSession) {
       lastHtml.current = article.innerHTML
-      setEditingHtml(document.html)
+      setEditSession({ html: document.html, template })
     }
     onFocusChange(enabled)
-  }, [document.html, editingHtml, onEdit, onFocusChange])
+  }, [document.html, hasEditSession, onEdit, onFocusChange, template])
 
   const closeLink = useCallback(() => {
     if (canvas.current && link) restoreRange(canvas.current, link.range)
@@ -294,7 +316,7 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
       owner.removeEventListener('pointerup', clearOutsideSelection)
       owner.removeEventListener('selectionchange', trackTypography)
     }
-  }, [editing, refreshTypography])
+  }, [editing, refreshTypography, template])
 
   useEffect(() => {
     if (!focused && !(editing && link)) return
@@ -435,10 +457,10 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
           typographySelection.current = null
           fontSizeHistory.clear()
           pickerRange.current = null
-          setEditingHtml(null)
+          setEditSession(null)
         } else {
           lastHtml.current = canvas.current?.innerHTML ?? document.html
-          setEditingHtml(document.html)
+          setEditSession({ html: document.html, template })
         }
       }}
     >
@@ -532,6 +554,7 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
   // Keep native HTML drops out of the editable article.
   const article = (
     <article
+      key={template}
       id="platform-article"
       className="article"
       ref={canvas}
@@ -546,9 +569,13 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
         rememberCaret()
         typographySelection.current = rangeIn(event.currentTarget)
       } : undefined}
-      onCompositionStart={editing ? () => { composing.current = true } : undefined}
+      onCompositionStart={editing ? () => {
+        composing.current = true
+        setIsComposing(true)
+      } : undefined}
       onCompositionEnd={(event) => {
         composing.current = false
+        setIsComposing(false)
         if (editing) update(event.currentTarget)
         endComposition.current?.()
         endComposition.current = null
@@ -605,5 +632,5 @@ export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdi
     />
   )
 
-  return renderLayout({ action, focusAction, tools, article, editing })
+  return renderLayout({ action, focusAction, tools, article, editing, templateBlockReason })
 }

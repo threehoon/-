@@ -42,7 +42,7 @@ export interface PreviewPanelProps {
   readonly onDiscard?: () => void
   readonly focused?: boolean
   readonly onFocusChange?: (enabled: boolean) => void
-  readonly renderActions?: (editAction: ReactNode, focusAction: ReactNode, editing: boolean) => ReactNode
+  readonly renderActions?: (editAction: ReactNode, focusAction: ReactNode, editing: boolean, templateBlockReason: string | null) => ReactNode
   readonly compatibility?: Pick<CompatibilityListProps, 'expanded' | 'onToggle'>
   readonly compatibilityWarnings?: readonly CompatWarning[]
   readonly onLocateSource?: (location: CompatibilityLocation) => boolean
@@ -107,7 +107,7 @@ export function PreviewPanel({
       : { status: 'unavailable', message: '当前无法可靠定位，请按原文片段查找。' }
   }
 
-  function renderLayout({ action, focusAction, tools, article, editing }: ArticleLayout) {
+  function renderLayout({ action, focusAction, tools, article, editing, templateBlockReason = null }: ArticleLayout) {
     const isEditing = Boolean(editing || focused)
     const capabilityNote = focused ? null : (
       <p className="capability-note" data-evidence={platform.capabilityEvidence}>
@@ -119,7 +119,7 @@ export function PreviewPanel({
     )
     return (
       <>
-        {renderActions?.(action, focusAction, isEditing)}
+        {renderActions?.(action, focusAction, isEditing, templateBlockReason)}
         {tools}
         {compatibility && compatibilityWarnings.length ? (
           <div className="preview-compatibility" data-editing={isEditing}>
@@ -283,6 +283,7 @@ export function PreviewPanel({
     <EditableArticle
       key={`${platform.id}-${generation}`}
       document={document}
+      template={template}
       onEdit={canEdit && onBodyEdit ? (...edit) => {
         onBodyEdit(...edit)
         setArticleRevision((previous) => previous + 1)

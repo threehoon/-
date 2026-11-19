@@ -4,6 +4,7 @@ import type { Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '@/App'
 import { corePorts } from '@/app/core-ports'
+import { PLATFORM_IDS } from '../core/types'
 
 /**
  * 整页集成测试：真实核心层 + 真实平台注册表，只有剪贴板按 jsdom 的实际能力走失败分支。
@@ -548,6 +549,54 @@ describe('工作台整页流程', () => {
     }
   })
 
+  it.each(PLATFORM_IDS)(
+    '在 %s 的专注编辑里直接换版，继续编辑并保留平台标题', async (platform) => {
+      renderApp()
+      const markdown = '# 原稿标题\n\n## 正文标题\n\n原正文。'
+      typeSource(markdown)
+      await typesetWithShortcut()
+      act(() => document.getElementById(`platform-tab-${platform}`)?.click())
+      act(() => buttonByText('专注编辑').click())
+      const headingStyle = container.querySelector('.article h2')?.getAttribute('style')
+      act(() => setValue(titleField(), '专属标题'))
+      const render = vi.spyOn(corePorts, 'typeset')
+      try {
+        expect(templateChoice('杂志长文').disabled).toBe(false)
+        act(() => templateChoice('杂志长文').click())
+        expect(render).toHaveBeenCalledOnce()
+        expect(render.mock.calls[0]?.[1]?.id).toBe(platform)
+        expect(container.querySelector('.article h2')?.getAttribute('style')).not.toBe(headingStyle)
+        expect(container.querySelector('.article')?.getAttribute('contenteditable')).toBe('true')
+        expect(titleField().value).toBe('专属标题')
+        expect(sourceDraft()).toBe(markdown)
+        act(() => buttonByText('退出专注').click())
+        expect(templateChoice('杂志长文').getAttribute('aria-pressed')).toBe('true')
+        act(() => buttonByText('完成编辑').click())
+        expect(queryText('.article-title')).toBe('专属标题')
+      } finally {
+        render.mockRestore()
+      }
+    },
+  )
+
+  it('专注时保护输入法中的文字和已手改的正文', async () => {
+    renderApp()
+    typeSource('# 标题\n\n原文。')
+    await typesetWithShortcut()
+    act(() => buttonByText('专注编辑').click())
+    const paragraph = container.querySelector('.article p')
+    if (!paragraph) throw new Error('找不到正文段落')
+    act(() => { paragraph.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })) })
+    expect(templateChoice('清爽留白').disabled).toBe(true)
+    expect(queryText('.wechat-templates__notice')).toContain('结束正在输入')
+    act(() => { paragraph.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })) })
+    expect(templateChoice('清爽留白').disabled).toBe(false)
+    changeBodyParagraph('专注手改后的正文。')
+    expect(templateChoice('清爽留白').disabled).toBe(true)
+    expect(queryText('.wechat-templates__notice')).toContain('手动正文改动')
+    expect(queryText('.article')).toBe('专注手改后的正文。')
+  })
+
   it('有平台专属样式时阻止换版，不丢弃正文', async () => {
     await editArticle()
     const article = container.querySelector<HTMLElement>('.article')
@@ -623,10 +672,11 @@ describe('工作台整页流程', () => {
     }
   })
 
-  it('切版渲染失败保留旧成稿、复制能力和选中模板，并可以重试', async () => {
+  it.each([false, true])('切版渲染失败保留旧成稿、复制能力和当前模板，允许重试（专注：%s）', async (focused) => {
     renderApp()
     typeSource('# 标题\n\n## 正文标题\n\n原文。')
     await typesetWithShortcut()
+    if (focused) act(() => buttonByText('专注编辑').click())
     const before = container.querySelector('.article')?.innerHTML
     const render = vi.spyOn(corePorts, 'typeset').mockImplementationOnce(() => { throw new Error('渲染中断') })
     try {

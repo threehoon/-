@@ -113,8 +113,8 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
   }, [articleHtml, failedSources, state.boundAssets])
   const warnings = [...api.warnings, ...previewWarnings].filter(({ severity }) => !focused || severity === 'blocker')
   const activeTemplate = selectActiveTemplate(state)
-  const showTemplates = !focused && api.document !== null &&
-    api.copyBlockReason === null && state.typesetFailure === null
+  const showTemplates = api.document !== null && api.copyBlockReason === null && state.typesetFailure === null
+  const templateConflict = selectTemplateEditConflict(state)
 
   function locateSource(location: CompatibilityLocation): boolean {
     const baselineMarkdown = state.typesetBaselines[platform.id]?.markdown
@@ -243,16 +243,16 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
             aria-labelledby={focused ? 'focused-platform-name' : platformTabId(state.platform)}
           >
             <PreviewPanel
-              renderActions={(editAction, focusAction, editing) => (
+              renderActions={(editAction, focusAction, editing, templateBlockReason) => (
                 <CopyActions
                   editAction={editAction}
                   focusAction={focusAction}
                   templateAction={showTemplates ? (
                     <WechatTemplatePicker
-                      key={platform.id}
+                      key={`${platform.id}:${focused}`}
                       platform={platform}
                       selected={activeTemplate}
-                      blocked={editing ? '先点「完成编辑」，再切换模板。' : selectTemplateEditConflict(state) ?? api.copyBlockReason}
+                      blocked={editing && !focused ? '先点「完成编辑」，再切换模板。' : templateBlockReason ?? templateConflict}
                       onSelect={api.selectTemplate}
                     />
                   ) : null}
