@@ -14,6 +14,9 @@ import {
   selectActiveFailure,
   selectCopyBlockReason,
   selectPlatformResult,
+  selectPatchBlockReason,
+  selectSyncBlockReason,
+  selectTemplateEditConflict,
   selectStatus,
   selectSucceededPlatforms,
   studioReducer,
@@ -197,33 +200,31 @@ describe('工作台状态机 · 输出过期', () => {
   })
 })
 
-describe('工作台状态机 · 右侧回写', () => {
-  function bodyEdit(state: StudioState, options: { markdown: string | null; issue?: string; platformStyle?: boolean }): StudioEvent {
-    if (!state.report) throw new Error('测试需要先排版')
+describe('工作台状态机 · 平台隔离', () => {
+  function bodyEdit(state: StudioState, platformStyle = false): StudioEvent {
+    const baseline = state.typesetBaselines[state.platform]
+    if (!state.report || !baseline) throw new Error('测试需要先排版')
     return {
-      type: 'body/edited',
-      report: state.report,
-      platform: state.platform,
-      revision: state.revision,
-      markdown: options.markdown,
-      edit: {
-        html: '<p>右侧改过</p>',
-        plainText: '右侧改过',
-        synced: options.markdown !== null && options.markdown !== state.markdown,
-        issue: options.issue ?? null,
-        platformStyle: options.platformStyle ?? false,
+      type: 'body/edited', report: state.report, platform: state.platform, revision: state.revision,
+      patch: {
+        html: '<p>右侧改过</p>', plainText: '右侧改过', state: 'diverged', reason: null, platformStyle,
+        base: baseline, mapping: { html: '<p>正文段落</p>', markdown: baseline.markdown, warnings: [] },
+        syncedHtml: '<p>正文段落</p>', syncedMarkdown: baseline.markdown, assets: {},
       },
     }
   }
 
-  it('不能回写的改动保留在当前成稿，不污染公共源稿或让其它成稿过期', () => {
+  it('编辑不改源稿或 revision，不影响其它平台，并仅拦有手动样式的换版', () => {
     const before = typedState()
-    const next = studioReducer(before, bodyEdit(before, { markdown: null, issue: '表格已降级' }))
+    const next = studioReducer(before, bodyEdit(before))
     expect(next.markdown).toBe(before.markdown)
     expect(next.revision).toBe(before.revision)
     expect(selectActiveDocument(next)?.plainText).toBe('右侧改过')
     expect(selectCopyBlockReason(next)).toBeNull()
-    expect(next.bodyEdits.wechat?.issue).toBe('表格已降级')
+    expect(selectSyncBlockReason(next)).toBeNull()
+    expect(selectTemplateEditConflict(next)).toBeNull()
+    expect(selectTemplateEditConflict(studioReducer(before, bodyEdit(before, true)))).toContain('手动样式')
+    expect(next.bodyPatches.wechat?.state).toBe('diverged')
     const switched = studioReducer(next, { type: 'platform/changed', platform: 'toutiao' })
     expect(selectCopyBlockReason(switched)).toBeNull()
     expect(selectActiveDocument(switched)?.plainText).toBe('正文段落')
@@ -234,15 +235,69 @@ describe('工作台状态机 · 右侧回写', () => {
     { type: 'import/succeeded', markdown: '另一个文件', fileName: '新稿.md' },
     { type: 'platform/changed', platform: 'toutiao' },
     { type: 'typeset/started' },
-  ])('拒绝落在 %s 之后的旧回写事务', (intervening) => {
+  ])('拒绝落在 %s 之后的旧编辑事务', (intervening) => {
     const before = typedState()
     const after = studioReducer(before, intervening)
-    expect(studioReducer(after, bodyEdit(before, { markdown: '旧事务结果' }))).toBe(after)
+    expect(studioReducer(after, bodyEdit(before))).toBe(after)
+  })
+
+  it('同基线重排保留补丁；改变基线后仍可查看，必须撤销才能使用新成稿', () => {
+    const before = typedState()
+    const dirty = studioReducer(before, bodyEdit(before))
+    const rerender = (state: StudioState) => runEvents([
+      { type: 'typeset/started' }, { type: 'typeset/succeeded', report: okReport() },
+    ], state)
+    expect(rerender(dirty).bodyPatches.wechat?.state).toBe('diverged')
+    const stale = studioReducer(dirty, { type: 'title/changed', value: '新标题' })
+    expect(stale.bodyPatches.wechat?.state).toBe('superseded')
+    const refreshed = rerender(stale)
+    expect(selectActiveDocument(refreshed)?.plainText).toBe('右侧改过')
+    expect(selectPatchBlockReason(refreshed)).toContain('基线已变')
+    expect(selectSyncBlockReason(refreshed)).toContain('基线已变')
+    const reverted = studioReducer(refreshed, { type: 'patch/discarded', platform: 'wechat' })
+    expect(selectActiveDocument(reverted)?.plainText).toBe('正文段落')
+    expect(selectPatchBlockReason(reverted)).toBeNull()
+  })
+
+  it('恢复相同源稿后重排可重新绑定原平台补丁', () => {
+    const before = typedState()
+    const dirty = studioReducer(before, bodyEdit(before))
+    const refreshed = runEvents([
+      { type: 'source/changed', markdown: '另外的草稿' },
+      { type: 'source/changed', markdown: before.markdown },
+      { type: 'typeset/started' }, { type: 'typeset/succeeded', report: okReport() },
+    ], dirty)
+    expect(refreshed.bodyPatches.wechat?.state).toBe('diverged')
+    expect(refreshed.bodyPatches.wechat?.base.revision).toBe(refreshed.revision)
+  })
+
+  it('只有显式同步推进共享基线，当前平台关联，已有的其它补丁保留为过期', () => {
+    const before = typedState()
+    const switched = studioReducer(before, { type: 'platform/changed', platform: 'toutiao' })
+    const edited = studioReducer(switched, bodyEdit(switched))
+    const current = studioReducer(edited, { type: 'platform/changed', platform: 'wechat' })
+    const dirty = studioReducer(current, bodyEdit(current))
+    const patch = dirty.bodyPatches.wechat
+    if (!patch) throw new Error('缺少补丁')
+    const markdown = before.markdown.replace('正文段落。', '右侧改过')
+    const next = studioReducer(dirty, {
+      type: 'sync/to-source', platform: 'wechat', markdown, projectedMarkdown: markdown, assets: {}, patch,
+      document: makeDocument('wechat', { html: patch.html, plainText: patch.plainText }),
+    })
+    expect(next.markdown).toBe(markdown)
+    expect(next.revision).toBe(before.revision + 1)
+    expect(next.typesetBaselines.wechat?.markdown).toBe(markdown)
+    expect(next.bodyPatches.wechat?.state).toBe('linked')
+    expect(next.bodyPatches.toutiao?.state).toBe('superseded')
+    expect(isStale(next)).toBe(false)
+    const stale = studioReducer(next, { type: 'platform/changed', platform: 'toutiao' })
+    expect(isStale(stale)).toBe(true)
+    expect(selectCopyBlockReason(stale)).toContain('重新排版')
   })
 
   it('失败重排不丢掉上一版的未同步成稿，也不改变源稿', () => {
     const before = typedState()
-    const dirty = studioReducer(before, bodyEdit(before, { markdown: null, platformStyle: true }))
+    const dirty = studioReducer(before, bodyEdit(before, true))
     const failed = runEvents([
       { type: 'typeset/started' },
       { type: 'typeset/succeeded', report: makeReport([], { typesetAt: null, parseError: '无法重新解析' }) },
@@ -253,6 +308,7 @@ describe('工作台状态机 · 右侧回写', () => {
     expect(failed.typesetFailure?.reason).toBe('无法重新解析')
     expect(selectActiveDocument(failed)?.plainText).toBe('右侧改过')
     expect(selectCopyBlockReason(failed)).toBeNull()
+    expect(selectSyncBlockReason(failed)).toContain('排版失败')
   })
 
   it('在排版开始后修改左侧时不安装根据旧稿生成的结果', () => {

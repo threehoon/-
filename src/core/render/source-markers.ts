@@ -4,6 +4,7 @@ export const ARTICLE_SOURCE_ATTR = 'data-uma-source-article'
 export const IMAGE_SOURCE_ATTR = 'data-uma-source-image'
 export const CODE_SOURCE_ATTR = 'data-uma-source-code'
 export const TABLE_SOURCE_ATTR = 'data-uma-source-align'
+export const DOWNGRADED_TABLE_ATTR = 'data-uma-source-table'
 export const FORMAT_SOURCE_ATTR = 'data-uma-source-format'
 export const TITLE_SOURCE_ATTR = 'data-uma-source-title'
 
@@ -32,7 +33,7 @@ export function readSourceMarker(node: Node): SourceMarker | null {
 export function stripArticleSourceMarkers(html: string): string {
   return html
     .replace(/<!--uma-source:[se]:\d+:\d+:[01]-->/g, '')
-    .replace(/<[a-z][^<>]*>/gi, (tag) => tag.replace(/\sdata-uma-source-(?:article|image|code|align|format|title)="[^"]*"/gi, ''))
+    .replace(/<[a-z][^<>]*>/gi, (tag) => tag.replace(/\sdata-uma-source-(?:article|image|code|align|table|format|title)="[^"]*"/gi, ''))
 }
 
 export function sourceAttribute(name: string, escapedValue: string): string {

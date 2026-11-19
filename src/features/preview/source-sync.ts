@@ -134,6 +134,22 @@ function sourceFormats(nodes: readonly Node[]): string {
   }).join(',')
 }
 
+/** Detect platform-only style without trying to rewrite or parse the Markdown source. */
+export function hasLocalStyle(baselineHtml: string, html: string): boolean {
+  if (html === baselineHtml) return false
+  const baseline = readHtml(baselineHtml)
+  const edited = readHtml(html)
+  return localStyles(baseline, edited) || sourceFormats(articleNodes(baseline)) !== sourceFormats(articleNodes(edited))
+}
+
+/** Compare the Markdown-representable body, ignoring font, highlight and similar CSS. */
+export function sameArticleContent(beforeHtml: string, afterHtml: string, assets: Readonly<Record<string, string>>): boolean {
+  if (beforeHtml === afterHtml) return true
+  const before = readHtml(beforeHtml)
+  const after = readHtml(afterHtml)
+  return sameProjection(articleNodes(before), articleNodes(after), createEditSerializer(before, assets))
+}
+
 function separatorNeeded(gap: string, newline: string): string {
   const lineBreaks = gap.trim() === '' ? (gap.match(/\r\n|\n|\r/g)?.length ?? 0) : 0
   return newline.repeat(Math.max(0, 2 - lineBreaks))

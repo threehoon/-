@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
 export async function verifyDraftCheck({ browser, target, png }) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
@@ -17,7 +19,6 @@ export async function verifyDraftCheck({ browser, target, png }) {
     const article = page.locator('#platform-article')
     const check = page.getByRole('button', { name: '一键检查内容', exact: true })
     const findings = page.getByRole('list', { name: '内容检查结果' })
-    const selectedSource = () => source.evaluate((field) => field.value.slice(field.selectionStart, field.selectionEnd))
     const drop = (element, files, caret) => element.evaluate((el, { files, caret }) => {
       const transfer = new DataTransfer()
       for (const { name, type, bytes, size } of files) {
@@ -80,10 +81,30 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await compatibility.getByRole('button', { name: /定位.*表格已按原行序/u }).click()
     const marks = (name) => page.evaluate((name) => [...CSS.highlights.get(name) ?? []].map(String), name)
     assert((await marks('studio-compat-issue')).some((range) => /列名称：零件.*数量：1/u.test(range)))
-    const removed = compatibility.locator('li').filter({ hasText: '操作说明' })
-    await removed.getByRole('button', { name: /定位/u }).click()
-    assert.equal(await selectedSource(), '[操作说明](https://example.test/manual)')
-    assert(await source.evaluate((field) => field.scrollTop > 0), '定位已移除的外链时应滚到源稿位置')
+    const alreadyDegraded = compatibility.locator('li').filter({ hasText: '操作说明' })
+    assert.match(await alreadyDegraded.textContent(), /重新排版确认/u)
+    // 百家号成稿没有 <a>，不能把源稿快照伪装成实时定位；在保留外链的平台验证实际结构差异。
+    await page.getByRole('tab', { name: /^搜狐/ }).click()
+    await page.getByRole('button', { name: '编辑正文', exact: true }).click()
+    const originalLinkCount = await article.locator('a[href^="https:"]').count()
+    await article.locator('a[href="https://example.test/manual"]').evaluate((link) => {
+      link.replaceWith(...link.childNodes)
+      document.querySelector('#platform-article').dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    assert.equal(await source.inputValue(), draft)
+    await check.click()
+    const linkLoss = findings.locator('li').filter({ hasText: `外链 ${originalLinkCount}→${originalLinkCount - 1}` })
+    await linkLoss.getByRole('button', { name: /定位/u }).click()
+    assert.match(await linkLoss.textContent(), /未能定位.*全篇数量变化/u)
+    await article.getByText('第二次按装软件，已经已经下载。', { exact: true }).evaluate((paragraph) => {
+      paragraph.remove()
+      document.querySelector('#platform-article').dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    await check.click()
+    const missing = findings.locator('li').filter({ hasText: '疑似缺失段落' })
+    await missing.getByRole('button', { name: /定位/u }).click()
+    assert.match(await missing.textContent(), /第二次按装.*未能定位.*已经不在当前成稿/u)
+    await page.getByRole('tab', { name: /^百家/ }).click()
 
     const originalHtml = await article.innerHTML()
     await check.click()
@@ -138,6 +159,11 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await drop(article, [{ name: '配图.png', type: 'image/png', bytes: [...png] }], caret)
     await article.locator('img[alt="配图"]').waitFor()
     assert.match(await article.innerHTML(), /图前<img[^>]*>图后/u)
+    assert.equal(await source.inputValue(), draft, '右侧图片不应自动写入左侧')
+    const syncPrompt = page.waitForEvent('dialog')
+    const sync = page.getByRole('button', { name: '同步到源稿', exact: true }).click()
+    await (await syncPrompt).accept()
+    await sync
     assert.match(await source.inputValue(), /图前!\[配图\]\(paste-1\.png\)图后/u)
     assert.equal(await findings.count(), 0, '正文修改清除旧校对结果')
     await typeset()
@@ -146,11 +172,84 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await source.fill('# 正常标题\n\n这是一段正常的正文。')
     assert.equal(await findings.count(), 0, '修改左侧源稿清除旧校对结果')
     await typeset()
+    await page.getByRole('button', { name: '撤销右侧改动', exact: true }).click()
     await check.click()
-    await page.getByText('本次规则未发现问题。', { exact: true }).waitFor()
+    await page.getByText('本地校对与基线差异未发现问题，不代表稿件没有遗漏或语病。', { exact: true }).waitFor()
+    await page.getByRole('tab', { name: /^搜狐/ }).click()
+    await page.getByRole('button', { name: '撤销右侧改动', exact: true }).click()
+    const isolationDraft = '# 平台独立验收\n\n请访问[网站链接](https://example.test/site)。\n\n故意整段删掉的原文。\n\n这里是完全不同的相邻段。'
+    const importPrompt = page.waitForEvent('dialog')
+    const importNew = drop(source, [text('平台独立验收.md', isolationDraft)])
+    await (await importPrompt).accept()
+    await importNew
+    await page.getByText(/已导入 平台独立验收/u).waitFor()
+    await typeset()
+    const sohu = page.getByRole('tab', { name: /^搜狐/ })
+    const baijia = page.getByRole('tab', { name: /^百家/ })
+    const edit = page.getByRole('button', { name: '编辑正文', exact: true })
+    const remove = (locator) => locator.evaluate((element) => {
+      element.remove()
+      document.querySelector('#platform-article').dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    await sohu.click()
+    const sohuLink = page.locator('.compat__message').filter({ hasText: '正文仍有站外链接或明文网址' })
+    await sohuLink.waitFor()
+    await edit.click()
+    await remove(article.getByRole('link', { name: '网站链接' }))
+    await sohuLink.waitFor({ state: 'detached' })
+    assert.equal(await source.inputValue(), isolationDraft)
+    await baijia.click()
+    const sameParagraph = article.getByText('请访问网站链接。', { exact: true })
+    await sameParagraph.waitFor()
+    await edit.click()
+    await remove(sameParagraph)
+    await page.getByRole('button', { name: '完成编辑', exact: true }).click()
+    assert.doesNotMatch(await article.textContent(), /网站链接/u)
+    assert.equal(await source.inputValue(), isolationDraft)
+    await sohu.click()
+    assert.equal(await sohuLink.count(), 0, '切回搜狐兼容项不应复现')
+    assert.match(await article.textContent(), /请访问。/u)
+    const isolationSync = page.waitForEvent('dialog')
+    const confirmSync = page.getByRole('button', { name: '同步到源稿', exact: true }).click()
+    await (await isolationSync).accept()
+    await confirmSync
+    assert.equal(await source.inputValue(), isolationDraft.replace('[网站链接](https://example.test/site)', ''))
+    await baijia.click()
+    await page.locator('.status-chip[data-state="stale"]').waitFor()
+    assert(await page.getByRole('button', { name: '复制正文', exact: true }).isDisabled())
+    assert.doesNotMatch(await article.textContent(), /网站链接/u, '百家号自身补丁仍可查看')
+    await sohu.click()
+    await edit.click()
+    await remove(article.getByText('故意整段删掉的原文。', { exact: true }))
+    await check.click()
+    const missingInSohu = findings.locator('li').filter({ hasText: '故意整段删掉的原文。' })
+    await missingInSohu.getByRole('button', { name: /定位/u }).click()
+    assert.match(await missingInSohu.textContent(), /疑似缺失段落.*基线第 2 段.*未能定位/u)
+
+    // Confirming a deletion of the last paragraph must not destroy the active native editor.
+    await source.fill('# 空稿编辑测试\n\n最后一段。')
+    await typeset()
+    await page.getByRole('button', { name: '撤销右侧改动', exact: true }).click()
+    await edit.click()
+    await remove(article.getByText('最后一段。', { exact: true }))
+    const emptySyncPrompt = page.waitForEvent('dialog')
+    const emptySync = page.getByRole('button', { name: '同步到源稿', exact: true }).click()
+    await (await emptySyncPrompt).accept()
+    await emptySync
+    assert.equal((await source.inputValue()).trim(), '# 空稿编辑测试')
+    assert.equal(await article.getAttribute('contenteditable'), 'true')
+    assert(await page.getByRole('button', { name: '完成编辑', exact: true }).isVisible())
+
     assert.deepEqual(externalRequests, [], '校对和拖放未联网')
-    return ['稿件拖入与替换确认', '校对红线与重复词定位', '兼容清单及已移除链接定位', '剪贴板隔离', '图片拖放与重新排版']
+    return ['稿件拖入与替换确认', '校对红线与重复词定位', '兼容来源标识、外链与段落差异定位', '剪贴板隔离', '图片拖放与重新排版', '搜狐删除外链、百家号删保护段、显式回写、过期和缺段']
   } finally {
     await context.close()
   }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const runner = fileURLToPath(new URL('./verify-ui.mjs', import.meta.url))
+  const result = spawnSync(process.execPath, [runner, '--draft-only'], { stdio: 'inherit' })
+  if (result.error) throw result.error
+  process.exitCode = result.status ?? 1
 }

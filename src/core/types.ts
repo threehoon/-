@@ -111,6 +111,12 @@ export interface CompatWarning {
   readonly action: string
   /** 原文片段，便于用户在源稿中定位。 */
   readonly excerpt: string
+  /**
+   * 结论的依据：`live` 表示能从当前成稿直接看出来（编辑后可即时重算）；
+   * `source` 表示只有源稿能判断（例如被拦截的链接、展开掉的引用式链接）。
+   * 缺省按 `source` 处理，兼容排版时产生的原始快照。
+   */
+  readonly source?: 'live' | 'source'
   /** 排版时记录的位置，图片加载失败时使用当前成稿的图片序号。 */
   readonly locations?: readonly CompatibilityLocation[]
 }

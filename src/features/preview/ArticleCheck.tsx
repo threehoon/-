@@ -1,8 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { CompatWarning } from '@/core/types'
 import { clipExcerpt } from '@/app/text'
-import { articleTextUnits, checkArticleContent, contentRange, type ContentFinding } from './content-check'
-import { compatibilityTargets, locateRange } from './issue-locations'
+import { articleTextUnits, checkArticleContent, contentFindingElement, contentRange, type ContentFinding } from './content-check'
+import { compatibilityTargets, locateRange, outcomeRange } from './issue-locations'
+import { checkAgainstBaseline } from './content-baseline'
+import { censusOf, type ContentCensus } from './content-census'
 import { ARTICLE_CHECK_FORM_ID } from './panel-ids'
 
 const CONTENT_MARK = 'studio-content-issue'
@@ -17,14 +19,17 @@ function imageSelector(image: HTMLImageElement, article: Element): string {
   return ['#platform-article', ...levels].join(' > ')
 }
 
-export function ArticleCheck({ enabled, inEditor, warnings }: {
+export function ArticleCheck({ enabled, inEditor, warnings, baseline }: {
   readonly enabled: boolean
   readonly inEditor: boolean
   readonly warnings: readonly CompatWarning[]
+  readonly baseline: ContentCensus | null
 }) {
   const panel = useRef<HTMLFormElement>(null)
   const imageRules = useRef<HTMLStyleElement>(null)
-  const [findings, setFindings] = useState<readonly ContentFinding[] | null>(null)
+  const [findings, setFindings] = useState<readonly { finding: ContentFinding; element: Element | null }[] | null>(null)
+  /** 定位反馈：只落到段落、或找不到时，把原因写在对应条目的下面。 */
+  const [locateNotice, setLocateNotice] = useState<{ readonly id: string; readonly text: string } | null>(null)
 
   function canvas() {
     return panel.current?.closest('.preview-canvas') ?? null
@@ -45,7 +50,10 @@ export function ArticleCheck({ enabled, inEditor, warnings }: {
     }
     if (!registry || typeof Highlight === 'undefined') return
     const units = findings ? articleTextUnits(root) : []
-    const ranges = findings?.flatMap((finding) => contentRange(units, finding) ?? []) ?? []
+    const ranges = findings?.flatMap(({ finding, element }) => {
+      const outcome = contentRange(units, finding, article, element)
+      return outcomeRange(outcome) ?? []
+    }) ?? []
     if (targets.ranges.length) registry.set(COMPAT_MARK, new Highlight(...targets.ranges))
     if (ranges.length) {
       const highlight = new Highlight(...ranges)
@@ -68,8 +76,14 @@ export function ArticleCheck({ enabled, inEditor, warnings }: {
       onSubmit={(event) => {
         event.preventDefault()
         const root = canvas()
-        if (!enabled || !root) return
-        setFindings(checkArticleContent(articleTextUnits(root)))
+        const article = root?.querySelector('#platform-article')
+        if (!enabled || !root || !article) return
+        const differences = baseline ? checkAgainstBaseline(baseline, censusOf(article.innerHTML)) : []
+        setLocateNotice(null)
+        const units = articleTextUnits(root)
+        setFindings([...differences, ...checkArticleContent(units)].map((finding) => ({
+          finding, element: contentFindingElement(units, finding, article),
+        })))
         if (inEditor) requestAnimationFrame(() => panel.current?.scrollIntoView({ block: 'nearest' }))
       }}
     >
@@ -83,24 +97,41 @@ export function ArticleCheck({ enabled, inEditor, warnings }: {
       </button>}
       {findings === null ? null : (
         <p className="content-check__summary" role="status">
-          {findings.length === 0 ? '本次规则未发现问题。' : `发现 ${findings.length} 处需要核对。`}
+          {findings.length === 0 ? '本地校对与基线差异未发现问题，不代表稿件没有遗漏或语病。' : `发现 ${findings.length} 处需要核对。`}
         </p>
       )}
       {findings?.length ? (
         <ul className="content-check__list" aria-label="内容检查结果">
-          {findings.map((finding) => (
+          {findings.map(({ finding, element }) => (
             <li key={finding.id}>
               <div>
                 <strong>{finding.title ? '标题' : '正文'} · {clipExcerpt(finding.original)}</strong>
                 <p>{finding.advice}</p>
+                {finding.detail ? <p>{finding.detail}</p> : null}
+                {locateNotice?.id === finding.id ? (
+                  <p className="content-check__notice" role="status">{locateNotice.text}</p>
+                ) : null}
               </div>
               <button
                 className="btn btn--ghost btn--small"
                 type="button"
                 onClick={() => {
                   const root = canvas()
-                  const range = root && contentRange(articleTextUnits(root), finding)
+                  const outcome = root ? contentRange(articleTextUnits(root), finding, root.querySelector('#platform-article'), element) : null
+                  if (!outcome) {
+                    setLocateNotice({ id: finding.id, text: '这一版成稿里没有可定位的正文。' })
+                    return
+                  }
+                  const range = outcomeRange(outcome)
                   if (range) locateRange(range)
+                  setLocateNotice({
+                    id: finding.id,
+                    text: outcome.status === 'unavailable'
+                      ? `未能定位：${outcome.reason}`
+                      : outcome.status === 'block'
+                         ? finding.kind === 'shrunk' ? '已定位到疑似缩短的整个段落。' : '这段文字已经改过，已定位到它所在的段落。'
+                         : '',
+                  })
                 }}
                 aria-label={`定位${finding.title ? '标题' : '正文'}中的「${clipExcerpt(finding.original)}」`}
               >

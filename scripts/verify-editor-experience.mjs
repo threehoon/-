@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
 const commandKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 const CJK_DRAFT = '# 性能样稿\n\n' + ('字'.repeat(100) + '\n\n').repeat(100)
-const SYNC_LIMIT_MS = 300
+const EDIT_LIMIT_MS = 300
 
 export async function verifyEditorExperience({ page, context, source, trigger, copyBody, shot, png }) {
   const openEditor = page.getByRole('button', { name: '编辑正文', exact: true })
@@ -127,29 +129,35 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await (await chooser).setFiles({ name, mimeType: 'image/png', buffer })
   }
 
-  async function measuredSync(expected, eventName, action) {
+  const syncButton = page.getByRole('button', { name: '同步到源稿', exact: true })
+  async function syncSource({ accept = true, expected } = {}) {
+    const message = dismissDialog(accept)
+    await syncButton.click()
+    assert.match(await message, /同步到源稿.*可能覆盖左侧同段改动/u)
+    if (expected !== undefined) await expectSource(expected)
+  }
+
+  async function measuredEdit(expected, eventName, action) {
     await page.evaluate(({ expected, eventName }) => {
-      const source = document.querySelector('#source-markdown')
-      window.qaSync = new Promise((resolve) => {
+      const article = document.getElementById('platform-article')
+      window.qaEdit = new Promise((resolve) => {
         const timer = setTimeout(() => resolve(null), 3000)
-        document.getElementById('platform-article').addEventListener(eventName, () => {
+        article.addEventListener(eventName, () => {
           const started = performance.now()
-          function observe() {
-            if (source.value === expected && source.getBoundingClientRect().width > 0) {
-              clearTimeout(timer)
-              resolve(performance.now() - started)
-            } else if (performance.now() - started < 3000) {
-              requestAnimationFrame(observe)
-            }
-          }
-          requestAnimationFrame(observe)
+          requestAnimationFrame(() => {
+            clearTimeout(timer)
+            const observed = article.querySelector('p').textContent === expected
+            const committed = Boolean(document.querySelector('#article-patch-status'))
+            resolve(observed && committed ? performance.now() - started : null)
+          })
         }, { capture: true, once: true })
       })
     }, { expected, eventName })
     await action()
-    const elapsed = await page.evaluate(() => window.qaSync)
-    assert(elapsed !== null && elapsed <= SYNC_LIMIT_MS,
-      `${eventName} 后约 10,000 字源稿未在 ${SYNC_LIMIT_MS}ms 内写回（实测 ${elapsed ?? '无匹配'}）`)
+    const elapsed = await page.evaluate(() => window.qaEdit)
+    assert(elapsed !== null && elapsed <= EDIT_LIMIT_MS,
+      `${eventName} 后约 10,000 字成稿未在 ${EDIT_LIMIT_MS}ms 内显示已提交编辑（实测 ${elapsed ?? '无匹配'}）`)
+    await expectSource(CJK_DRAFT)
     return Math.round(elapsed * 10) / 10
   }
 
@@ -173,9 +181,9 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await scroll.evaluate((el) => { el.scrollTop = 0 })
 
     const first = editor.locator('p').first()
-    const firstChars = (value) => CJK_DRAFT.replace('字'.repeat(4), '字字' + value + '字字')
+    const firstChars = (value) => '字字' + value + '字'.repeat(98)
     await selectIn(first, 2)
-    const committedInputMs = await measuredSync(firstChars('中'), 'input', () => page.keyboard.insertText('中'))
+    const committedInputMs = await measuredEdit(firstChars('中'), 'input', () => page.keyboard.insertText('中'))
     assert.deepEqual(await selection(), { inside: true, focused: true, collapsed: true, offset: 3, text: '' })
     await page.keyboard.press('Backspace')
     await expectSource(CJK_DRAFT)
@@ -188,26 +196,28 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
       assert.match(await first.innerText(), /zhongwen/, '合成中的候选文本没有进入右侧暂态')
       await frame()
       assert.equal(await source.inputValue(), CJK_DRAFT, '候选文字尚未提交就写回源稿')
-      chromiumCompositionMs = await measuredSync(firstChars('中文'), 'compositionend', () =>
+      chromiumCompositionMs = await measuredEdit(firstChars('中文'), 'compositionend', () =>
         cdp.send('Input.insertText', { text: '中文' }))
     } finally {
       await cdp.detach()
     }
     assert.deepEqual(await selection(), { inside: true, focused: true, collapsed: true, offset: 4, text: '' })
     await page.keyboard.press('Backspace')
-    const deleteMs = await measuredSync(CJK_DRAFT, 'input', () => page.keyboard.press('Backspace'))
+    const deleteMs = await measuredEdit(firstChars(''), 'input', () => page.keyboard.press('Backspace'))
     await selectIn(first, 2, 4)
     assert.equal((await selection()).text, '字字')
     await page.evaluate(() => navigator.clipboard.writeText('粘贴'))
     const pasted = CJK_DRAFT.replace('字'.repeat(4), '字字粘贴')
-    const pasteMs = await measuredSync(pasted, 'input', () => page.keyboard.press(`${commandKey}+V`))
+    const pasteMs = await measuredEdit('字字粘贴' + '字'.repeat(96), 'input', () => page.keyboard.press(`${commandKey}+V`))
     assert((await selection()).collapsed && (await selection()).focused, '粘贴后没有保留编辑焦点和折叠光标')
     await page.keyboard.press(`${commandKey}+Z`)
-    await expectSource(CJK_DRAFT)
+    assert.equal(await first.innerText(), firstChars(''))
     await page.keyboard.press(`${commandKey}+Shift+Z`)
-    await expectSource(pasted)
+    assert.match(await first.innerText(), /^字字粘贴/u)
+    await expectSource(CJK_DRAFT)
     assert.match(await copyCurrentBody(), /字字粘贴/)
-    evidence.performanceMs = { typesetMs, committedInputMs, chromiumCompositionMs, deleteMs, pasteMs, limit: SYNC_LIMIT_MS }
+    await syncSource({ expected: pasted })
+    evidence.performanceMs = { typesetMs, committedInputMs, chromiumCompositionMs, deleteMs, pasteMs, limit: EDIT_LIMIT_MS }
     evidence.inputMethod = 'Chromium CDP composition simulation and committed input; native macOS IME not exercised'
     await shot('11-chinese-committed-1440')
   })
@@ -236,11 +246,13 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await selectIn(editor.getByText('只改这一段。', { exact: true }), 0, 2)
     await page.keyboard.insertText('更新')
     const updated = draft.replace('只改这一段。', '更新这一段。')
-    await expectSource(updated)
+    await expectSource(draft)
+    await syncSource({ expected: updated })
     assert.equal(await title.inputValue(), '验收手填标题')
     await selectRenderedWord(editor.getByText(/降级单元/).last(), '降级单元')
     await page.keyboard.insertText('右侧表格改动')
-    await page.getByText(/部分修改未同步到 Markdown/).first().waitFor()
+    await syncSource()
+    await page.locator('.article-edit__issue').filter({ hasText: /未同步/ }).waitFor()
     assert.match(await editor.innerText(), /右侧表格改动/)
     assert.equal(await source.inputValue(), updated, '降级表格的修改破坏了公共源稿')
     assert(!(await copyBody.isDisabled()), '保留的右侧修改应仍可复制')
@@ -264,7 +276,8 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await selectIn(first, 0, 3)
     await tools.getByRole('button', { name: '加粗', exact: true }).click()
     const boldDraft = draft.replace('加粗字', '**加粗字**')
-    await expectSource(boldDraft)
+    await expectSource(draft)
+    await syncSource({ expected: boldDraft })
     assert.match(await first.innerHTML(), /<(?:b|strong)>加粗字/)
     const imageButton = tools.getByRole('button', { name: '插入图片', exact: true })
     const last = editor.locator('p').last()
@@ -277,6 +290,10 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await pasteImage()
     await page.waitForFunction(() => [...document.querySelectorAll('.article img')].some((img) => img.naturalWidth === 80))
     assert.match(await last.innerHTML(), /本地图片<img[^>]+>位置。/)
+    await expectSource(boldDraft)
+    await syncSource({ accept: false, expected: boldDraft })
+    assert.equal(await editor.locator('img').count(), 1)
+    await syncSource()
     const pairedDraft = await source.inputValue()
     const reference = pairedDraft.match(/!\[[^\]]*\]\(([^)]+)\)/u)?.[1]
     assert.match(reference ?? '', /^[\w-]+\.png$/u, '本地图片必须写成简短且非 Base64/blob 的引用')
@@ -287,20 +304,20 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     assert.match(copied, /background-color:[^>]+>标记字/)
     await shot('13-inline-edit-image-1440')
 
-    const cancelled = dismissDialog(false)
-    await trigger.click()
-    assert.match(await cancelled, /覆盖.*平台成稿.*样式/)
-    assert.equal(await source.inputValue(), pairedDraft)
-    assert.match(await first.innerHTML(), /background-color:[^>]+>标记字/)
-    assert.equal(await editor.locator('img').count(), 1)
-    const accepted = dismissDialog(true)
-    await trigger.click()
-    assert.match(await accepted, /已配对图片会保留/)
-    await typeset()
+    let rerenderPrompt = null
+    const observePrompt = async (dialog) => { rerenderPrompt = dialog.message(); await dialog.dismiss() }
+    page.on('dialog', observePrompt)
+    try {
+      await trigger.click()
+      await typeset()
+    } finally {
+      page.off('dialog', observePrompt)
+    }
+    assert.equal(rerenderPrompt, null, '相同基线重新排版不应该询问是否覆盖')
     await page.waitForFunction(() => [...document.querySelectorAll('.article img')].some((img) => img.naturalWidth === 80))
-    assert.equal(await source.inputValue(), pairedDraft, '确认重排丢失了已同步文字或已配对图片引用')
+    assert.equal(await source.inputValue(), pairedDraft, '重新排版丢失了已同步文字或已配对图片引用')
     assert.match(await article.innerHTML(), /<(?:b|strong)\b[^>]*>加粗字/)
-    assert.doesNotMatch(await article.innerHTML(), /background-color:[^>]+>标记字/)
+    assert.match(await article.innerHTML(), /background-color:[^>]+>标记字/)
   })
 
   function dismissDialog(accept) {
@@ -331,11 +348,17 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await currentTab(/头条/).waitFor()
     assert.match(await article.innerText(), /甲乙丙丁/)
     assert.doesNotMatch(await article.innerText(), /最新|切换/)
-    assert(await copyBody.isDisabled(), '另一个平台的旧稿仍可误复制')
+    assert(!(await copyBody.isDisabled()), '同步前其它平台不应过期')
+    assert(await openFocus.isVisible())
+    await expectSource(draft)
+    await tabs.first().click()
+    assert.match(await article.innerText(), /甲乙最新切换丙丁/)
+    const updated = draft.replace('甲乙', '甲乙最新切换')
+    await syncSource({ expected: updated })
+    await tabs.nth(1).click()
+    assert(await copyBody.isDisabled(), '显式同步后其它平台应过期')
     assert.equal(await openFocus.count(), 0)
     assert.match(await page.locator('.preview-banner').innerText(), /源稿.*重新排版/)
-    const updated = draft.replace('甲乙', '甲乙最新切换')
-    await expectSource(updated)
     await shot('14-other-platform-stale-1440')
 
     const newer = updated + '\n\n左侧手改的新段。'
@@ -345,6 +368,8 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     assert.equal(await openEditor.count(), 0)
     await trigger.click()
     await typeset()
+    assert.match(await page.locator('#article-patch-status').innerText(), /基线已变/u)
+    await page.getByRole('button', { name: '撤销右侧改动', exact: true }).click()
     assert.match(await article.innerText(), /左侧手改的新段/)
     await openEditor.click()
     await selectIn(first, 2)
@@ -355,7 +380,8 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await typeset()
     assert.match(await article.innerText(), /甲乙紧接重排最新切换丙丁/)
     assert.match(await article.innerText(), /左侧手改的新段/)
-    assert.equal(await source.inputValue(), newer.replace('甲乙', '甲乙紧接重排'))
+    await expectSource(newer)
+    await syncSource({ expected: newer.replace('甲乙', '甲乙紧接重排') })
   })
 
   async function measureSplit() {
@@ -460,7 +486,8 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await openEditor.click()
     await selectRenderedWord(editor.getByText(/单元/).first(), '单元')
     await page.keyboard.insertText('改动')
-    await page.getByText(/部分修改未同步到 Markdown/).waitFor()
+    await syncSource()
+    await page.locator('.article-edit__issue').filter({ hasText: /未同步/ }).waitFor()
     const crowdedLayout = await scroll.evaluate((el) => {
       const rect = el.getBoundingClientRect()
       const list = document.querySelector('.compat__list')
@@ -540,8 +567,9 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
       const scrolling = el.closest('.preview__scroll').getBoundingClientRect()
       return r.top >= scrolling.top - 1 && r.bottom <= scrolling.bottom + 1
     }), '退出未保留当前阅读位置')
-    await expectSource(draft.replace(paragraphs[30], modified))
+    await expectSource(draft)
     await page.keyboard.press(`${commandKey}+Z`)
+    assert.equal(await anchor.innerText(), paragraphs[30])
     await expectSource(draft)
 
     // Hold exactly one real FileReader call. The image still arrives via the browser clipboard.
@@ -553,15 +581,20 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
       }
     })
     await openFocus.click()
+    await selectIn(anchor, 0, 4)
+    await page.keyboard.insertText('第31段')
     await selectIn(anchor, 4)
     await pasteImage()
     await page.getByText(/正在读取图片/).waitFor()
+    assert(await syncButton.isDisabled(), '读取图片时不能同步旧版本的右侧正文')
     await exitFocus.click()
     assert(await editor.isVisible(), '图片读取过程中无法退出专注')
     await page.evaluate(() => window.qaFinishImage())
     await anchor.locator('img').waitFor()
-    assert.match(await anchor.innerHTML(), /段落31<img[^>]+>：本段有明确的定位文本。/)
-    assert.match(await source.inputValue(), /段落31!\[[^\]]*\]\([\w-]+\.png\)：本段/)
+    assert.match(await anchor.innerHTML(), /第31段<img[^>]+>：本段有明确的定位文本。/)
+    await expectSource(draft)
+    await syncSource()
+    assert.match(await source.inputValue(), /第31段!\[[^\]]*\]\([\w-]+\.png\)：本段/)
     await shot('19-returned-from-focus-1440')
   })
 
@@ -588,15 +621,16 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await openEditor.click()
     assert.equal(await compatibility.count(), 0, '无警告的清单不应占用编辑区')
     assert(await note.evaluate((el) => Boolean(el.closest('.preview__scroll'))), '编辑时平台说明应随正文滚动')
+    // 发布预检条在编辑时也常驻预览顶部（约 50px），给「删掉内容后一键检测」留一个随手可点的入口。
     const split = await measureEditor()
-    assert(split.width >= 800 && split.visibleHeight >= 330, JSON.stringify(split))
+    assert(split.width >= 800 && split.visibleHeight >= 290, JSON.stringify(split))
     assert((await source.boundingBox()).height >= 320, 'Markdown 编辑框高度不足')
     await shot('after-split-1440x722')
 
     await openFocus.click()
     assert(!(await topbar.isVisible()), '专注模式仍显示全局顶栏')
     const focus = await measureEditor()
-    assert(focus.width >= 1100 && focus.visibleHeight >= 470, JSON.stringify(focus))
+    assert(focus.width >= 1100 && focus.visibleHeight >= 400, JSON.stringify(focus))
     await shot('after-focus-1440x722')
 
     await page.setViewportSize({ width: 390, height: 844 })
@@ -841,4 +875,11 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
 
   if (failures.length) throw new AggregateError(failures, 'Editor experience browser scenarios failed')
   return { scenarios, ...evidence }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const runner = fileURLToPath(new URL('./verify-ui.mjs', import.meta.url))
+  const result = spawnSync(process.execPath, [runner, '--editor-only'], { stdio: 'inherit' })
+  if (result.error) throw result.error
+  process.exitCode = result.status ?? 1
 }

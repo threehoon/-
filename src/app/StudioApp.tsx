@@ -114,10 +114,11 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
   const warnings = [...api.warnings, ...previewWarnings].filter(({ severity }) => !focused || severity === 'blocker')
   const activeTemplate = selectActiveTemplate(state)
   const showTemplates = !focused && api.document !== null &&
-    api.copyBlockReason === null && state.typesetFailure === null
+    (api.copyBlockReason === null || (api.status === 'typeset' && api.failure === null && api.bodyPatch?.state === 'superseded')) && state.typesetFailure === null
 
   function locateSource(location: CompatibilityLocation): boolean {
-    const baselineMarkdown = state.platformTypesetMarkdown[platform.id] ?? state.typesetMarkdown
+    const baselineMarkdown = api.bodyPatch?.mapping.markdown ?? state.typesetBaselines[platform.id]?.markdown
+    if (baselineMarkdown === undefined) return false
     const span = currentSourceSpan(location, baselineMarkdown, state.markdown)
     const field = document.querySelector<HTMLTextAreaElement>('#source-markdown')
     if (!span || !field) return false
@@ -252,7 +253,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
                       key={platform.id}
                       platform={platform}
                       selected={activeTemplate}
-                      blocked={editing ? '先点「完成编辑」，再切换模板。' : selectTemplateEditConflict(state)}
+                      blocked={editing ? '先点「完成编辑」，再切换模板。' : selectTemplateEditConflict(state) ?? api.copyBlockReason}
                       onSelect={api.selectTemplate}
                     />
                   ) : null}
@@ -295,8 +296,13 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
               typesetFailureReason={state.typesetFailure?.reason ?? null}
               onImageError={reportImageError}
               onBodyEdit={api.editBody}
-              bodyEdited={Boolean(state.bodyEdits[platform.id])}
-              bodySync={api.bodySync}
+              contentBaseline={api.contentBaseline}
+              bodyPatch={api.bodyPatch}
+              patchBlockReason={api.patchBlockReason}
+              syncBlockReason={api.syncBlockReason}
+              syncNotice={state.syncNotice?.platform === platform.id ? state.syncNotice : null}
+              onSync={api.syncToSource}
+              onDiscard={api.discardPatch}
               focused={focused}
               onFocusChange={changeFocus}
               availablePlatformNames={api.succeededPlatforms.map((id) =>

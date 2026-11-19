@@ -180,6 +180,15 @@ try {
   assert.match(clipboard.plain, /晨间集市/)
   assert.doesNotMatch(clipboard.html, /uma-source|城市散步手记|沿河散步手记/)
 
+  async function syncSource() {
+    const confirm = page.waitForEvent('dialog')
+    const click = button('同步到源稿').click()
+    const dialog = await confirm
+    assert.match(dialog.message(), /可能覆盖左侧同段改动/u)
+    await dialog.accept()
+    await click
+  }
+
   await button('编辑正文').click()
   await picker.click()
   await gallery.getByText('先点「完成编辑」，再切换模板。').waitFor()
@@ -194,8 +203,10 @@ try {
     getSelection().addRange(range)
   })
   await page.keyboard.insertText(' 下次再来。')
-  assert.match(await source.inputValue(), /下次再来/)
+  assert.doesNotMatch(await source.inputValue(), /下次再来/)
   await button('完成编辑').click()
+  await syncSource()
+  assert.match(await source.inputValue(), /下次再来/)
   await apply('暖纸手记')
   assert.match(await article.textContent(), /下次再来/)
   assert.equal(await article.locator('img').getAttribute('src'), imgSrc)
@@ -245,6 +256,8 @@ try {
     getSelection().addRange(range)
   })
   await page.locator('.editor-tools').getByRole('button', { name: /加粗/ }).click()
+  assert.equal(await source.inputValue(), '# 相邻格式回归\n\n**已加粗**相邻文字余下。')
+  await syncSource()
   assert.equal(await source.inputValue(), '# 相邻格式回归\n\n**已加粗相邻文字**余下。')
   await button('完成编辑').click()
   await apply('暖纸手记')

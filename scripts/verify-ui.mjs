@@ -7,6 +7,8 @@ import { verifyEditorExperience } from './verify-editor-experience.mjs'
 import { verifyPublishLinks } from './verify-publish-links.mjs'
 import { verifyDraftCheck } from './verify-draft-check.mjs'
 
+const editorOnly = process.argv.includes('--editor-only')
+const draftOnly = process.argv.includes('--draft-only')
 const target = new URL(process.env.TARGET_URL ?? 'http://localhost:5183/')
 const out = process.env.OUT_DIR ?? '.tmp/verify-ui'
 const goodImage = 'https://assets.example.test/ok.png'
@@ -23,6 +25,16 @@ const browser = await chromium.launch({
   headless: true,
 })
 try {
+  if (draftOnly) {
+    console.log(JSON.stringify({ result: 'passed', draftCheck: await verifyDraftCheck({ browser, target, png }) }, null, 2))
+  } else {
+    await verifyWorkbench()
+  }
+} finally {
+  await browser.close()
+}
+
+async function verifyWorkbench() {
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     locale: 'zh-CN',
@@ -66,6 +78,13 @@ try {
   const waitTypeset = () => page.locator('.status-chip[data-state="typeset"]').waitFor()
 
   await page.goto(target.href)
+  if (editorOnly) {
+    const evidence = await verifyEditorExperience({ page, context, source, trigger, copyBody, shot, png })
+    assert.deepEqual(unexpectedRequests, [], '访问了非测试站点')
+    assert.deepEqual(errors, [], '存在未预期的浏览器错误')
+    console.log(JSON.stringify({ result: 'passed', ...evidence }, null, 2))
+    return
+  }
   await page.getByRole('heading', { name: '左侧还没有源稿' }).waitFor()
   assert(await trigger.isDisabled())
   assert(await copyBody.isDisabled())
@@ -243,6 +262,4 @@ try {
     draftCheck: await verifyDraftCheck({ browser, target, png }),
     ...evidence,
   }, null, 2))
-} finally {
-  await browser.close()
 }

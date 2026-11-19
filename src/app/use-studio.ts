@@ -14,7 +14,10 @@ import type {
 import { DEFAULT_PLATFORM_ID, PLATFORMS } from '@/platforms/registry'
 import type { StudioPorts } from './ports'
 import { readMarkdownFile } from '@/features/source/import-markdown'
-import { syncArticleSource } from '@/features/preview/source-sync'
+import { hasLocalStyle, sameArticleContent, syncArticleSource } from '@/features/preview/source-sync'
+import { rebaseSourceChanges } from '@/features/preview/source-rebase'
+import { censusOf, type ContentCensus } from '@/features/preview/content-census'
+import { assessExternalLinkReview, reassessWarnings } from '@/features/preview/assess'
 import { stripArticleSourceMarkers } from '@/core/render/source-markers'
 import { reviewPublishDocument, type PublishReviewResult } from '@/core/publish-review/review'
 import {
@@ -24,16 +27,19 @@ import {
   selectActiveFailure,
   selectCopyBlockReason,
   selectPlatformResult,
+  selectPatchBlockReason,
+  selectSyncBlockReason,
   selectStatus,
   selectSucceededPlatforms,
   selectActiveTemplate,
   selectTemplateEditConflict,
   studioReducer,
 } from './studio-state'
-import type { BodySyncStatus, CopyKind, StudioEvent, StudioState, StudioStatus } from './studio-state'
+import type { BodyPatch, CopyKind, StudioEvent, StudioState, StudioStatus } from './studio-state'
 import { escapeHtml, reasonOf } from './text'
 
 const COPY_NOTICE_MS = 2000
+const NO_WARNINGS: readonly CompatWarning[] = []
 
 export interface LocalArticleImage {
   readonly url: string
@@ -60,6 +66,7 @@ export interface StudioApi {
   readonly remoteImages: readonly string[]
   readonly warnings: readonly CompatWarning[]
   readonly publishReview: PublishReviewResult | null
+  readonly contentBaseline: ContentCensus | null
   readonly document: RenderedDocument | null
   readonly failure: RenderFailure | null
   readonly succeededPlatforms: readonly PlatformId[]
@@ -70,7 +77,11 @@ export interface StudioApi {
   readonly selectPlatform: (platform: StudioState['platform']) => void
   readonly selectTemplate: (template: WechatTemplateId) => string | null
   readonly editBody: (html: string, plainText: string, localImage?: LocalArticleImage) => void
-  readonly bodySync: BodySyncStatus | null
+  readonly bodyPatch: BodyPatch | null
+  readonly patchBlockReason: string | null
+  readonly syncBlockReason: string | null
+  readonly syncToSource: () => void
+  readonly discardPatch: () => void
   readonly runTypeset: () => void
   readonly importFiles: (files: readonly File[]) => Promise<void>
   readonly copy: (kind: CopyKind, previewWarnings: readonly CompatWarning[], focused: boolean) => Promise<void>
@@ -101,23 +112,20 @@ function revokeObjectUrl(url: string): void {
 }
 
 function newImageAsset(ports: StudioPorts, state: StudioState, image: LocalArticleImage) {
-  if (Object.values(state.boundAssets).includes(image.url)) return undefined
+  const activeAssets = state.bodyPatches[state.platform]?.assets ?? {}
+  if (Object.values(state.boundAssets).includes(image.url) || Object.values(activeAssets).includes(image.url)) return undefined
+  const pendingPaths = Object.values(state.bodyPatches).flatMap((patch) => Object.keys(patch.assets))
   const mime = /^data:image\/(png|jpeg|webp|gif|avif);base64,/.exec(image.url)?.[1]
   if (!mime) return undefined
   const usedPaths = new Set([
     ...Object.keys(state.boundAssets),
+    ...pendingPaths,
     ...ports.collectImages(ports.parse(state.markdown)),
   ].map((path) => path.trim().replace(/\\/g, '/').replace(/^(?:\.\/)+/, '').split(/[?#]/, 1)[0]))
   const extension = mime === 'jpeg' ? 'jpg' : mime
   let number = 1
   while (usedPaths.has(`paste-${number}.${extension}`)) number += 1
   return { path: `paste-${number}.${extension}`, url: image.url }
-}
-
-function articleTextIdentity(html: string): string {
-  const template = window.document.createElement('template')
-  template.innerHTML = html
-  return (template.content.textContent ?? '').replace(/\s+/g, '')
 }
 
 function typesetInput(ports: StudioPorts, state: StudioState, platformTemplates = state.platformTemplates): TypesetRequest {
@@ -149,18 +157,18 @@ export function useStudio(ports: StudioPorts): StudioApi {
 
   useEffect(() => {
     const bound = new Set(Object.values(state.boundAssets))
-    const retainedHtml = Object.values(state.retainedDocuments).map((document) => document.html)
+    const patchHtml = Object.values(state.bodyPatches).flatMap(({ html, mapping, syncedHtml }) => [html, mapping.html, syncedHtml])
+    const retainedHtml = [...patchHtml, ...Object.values(state.retainedDocuments).map((document) => document.html)]
     for (const { outcome } of state.report?.results ?? []) {
       if (outcome.ok) retainedHtml.push(outcome.document.html)
     }
-    // Changing the source or importing another file does not remove the last preview.
-    // Keep its local URLs alive until the replacement results are actually installed.
+    // Old previews remain visible until replaced or explicitly discarded.
     for (const url of ownedObjectUrls.current) {
       if (bound.has(url) || retainedHtml.some((html) => html.includes(`src="${url}"`))) continue
       revokeObjectUrl(url)
       ownedObjectUrls.current.delete(url)
     }
-  }, [state.boundAssets, state.report, state.retainedDocuments])
+  }, [state.bodyPatches, state.boundAssets, state.report, state.retainedDocuments])
 
   useEffect(() => {
     const objectUrls = ownedObjectUrls.current
@@ -216,12 +224,6 @@ export function useStudio(ports: StudioPorts): StudioApi {
     if (snapshot.typesetting || isEmptyDraft(snapshot)) {
       return
     }
-    const edits = Object.values(snapshot.bodyEdits)
-    const lost = [
-      edits.some((edit) => edit.issue !== null) ? '尚未同步到 Markdown 的正文改动' : '',
-      edits.some((edit) => edit.platformStyle) ? '仅在平台成稿中保留的样式' : '',
-    ].filter(Boolean)
-    if (lost.length > 0 && !window.confirm(`重新排版会覆盖${lost.join('、')}。已写入 Markdown 的正文与已配对图片会保留，是否继续？`)) return
     dispatch({ type: 'typeset/started' })
     // 让「排版中」先渲染一帧：10k 字稿件的同步排版不该把状态提示吞掉。
     typesetTimer.current = window.setTimeout(() => {
@@ -252,8 +254,9 @@ export function useStudio(ports: StudioPorts): StudioApi {
       if (!outcome) throw new Error('没有生成新成稿。')
       if (!outcome.ok) throw new Error(outcome.failure.reason)
       if (!hasCopyableBody(outcome.document)) throw new Error('没有生成可复制正文。')
-      if (snapshot.bodyEdits[platform] && articleTextIdentity(current.html) !== articleTextIdentity(outcome.document.html)) {
-        return '换版会改变正文文字，已保留当前成稿。请核对左侧源稿，或撤销右侧有差异的改动。'
+      const previous = selectPlatformResult(snapshot, platform)?.outcome
+      if (previous?.ok && previous.document.plainText !== outcome.document.plainText) {
+        return '换版会改变正文文字，已保留当前成稿。请核对源稿后再试。'
       }
       dispatch({ type: 'template/applied', platform, template, baselineReport: snapshot.report, revision: snapshot.revision, document: outcome.document })
       if (stateRef.current.platformTemplates[platform] !== template) return '稿件已变化，未切换模板。请检查当前成稿后重试。'
@@ -275,50 +278,80 @@ export function useStudio(ports: StudioPorts): StudioApi {
     template.innerHTML = originalHtml
     return template.innerHTML
   }, [originalHtml])
-  const baselineMarkdown = state.platformTypesetMarkdown[state.platform] ?? state.typesetMarkdown
   const editBody = useCallback((html: string, plainText: string, localImage?: LocalArticleImage) => {
     const snapshot = stateRef.current
-    // A callback captured by an asynchronous picture read belongs only to its original
-    // editor. Ordinary edits advance the version without replacing that editor/report.
-    if (!snapshot.report || snapshot.report !== state.report || snapshot.platform !== state.platform ||
-      originalHtml === null || selectStatus(snapshot) !== 'typeset') return
+    // Delayed image reads must not install an edit into a replaced or discarded editor.
+    if (!snapshot.report || snapshot.report !== state.report || snapshot.generation !== state.generation ||
+      snapshot.platform !== state.platform || originalHtml === null || selectPatchBlockReason(snapshot)) return
+    const baseline = snapshot.typesetBaselines[snapshot.platform]
+    if (!baseline || !originalBody?.ok) return
     const normalized = html === normalizedOriginalHtml ? originalHtml : html
-    const previous = snapshot.bodyEdits[snapshot.platform]
+    const previous = snapshot.bodyPatches[snapshot.platform]
     if (normalized === (previous?.html ?? originalHtml)) return
 
-    let asset: ReturnType<typeof newImageAsset>
-    let result: ReturnType<typeof syncArticleSource>
-    try {
-      asset = localImage ? newImageAsset(ports, snapshot, localImage) : undefined
-      result = syncArticleSource({
-        baselineMarkdown,
-        baselineHtml: originalHtml,
-        html: normalized,
-        boundAssets: asset ? { ...snapshot.boundAssets, [asset.path]: asset.url } : snapshot.boundAssets,
-      })
-    } catch {
-      result = {
-        markdown: null,
-        issue: '无法定位这次正文改动对应的源稿位置。请在左侧编辑原文，或撤销这次右侧改动。',
-        platformStyle: previous?.platformStyle ?? false,
-      }
-    }
+    const mapping = previous?.mapping ?? { html: originalHtml, markdown: baseline.markdown, warnings: originalBody.document.warnings }
+    const syncedHtml = previous?.syncedHtml ?? originalHtml
+    const syncedMarkdown = previous?.syncedMarkdown ?? baseline.markdown
+    const asset = localImage ? newImageAsset(ports, snapshot, localImage) : undefined
+    const assets = asset ? { ...previous?.assets, [asset.path]: asset.url } : previous?.assets ?? {}
+    const platformStyle = hasLocalStyle(mapping.html, normalized)
+    const linked = sameArticleContent(syncedHtml, normalized, { ...snapshot.boundAssets, ...assets })
     dispatch({
       type: 'body/edited',
       platform: snapshot.platform,
       report: snapshot.report,
       revision: snapshot.revision,
-      markdown: result.markdown,
-      asset,
-      edit: {
-        html: normalized,
-        plainText,
-        issue: result.issue,
-        platformStyle: result.platformStyle,
-        synced: result.markdown !== null && result.markdown !== baselineMarkdown,
+      patch: {
+        html: normalized, plainText, state: linked ? 'linked' : 'diverged', platformStyle,
+        base: { revision: baseline.revision, fingerprint: baseline.fingerprint },
+        reason: null, mapping, syncedHtml, syncedMarkdown, assets,
       },
     })
-  }, [baselineMarkdown, dispatch, normalizedOriginalHtml, originalHtml, ports, state.platform, state.report])
+  }, [dispatch, normalizedOriginalHtml, originalBody, originalHtml, ports, state.generation, state.platform, state.report])
+
+  const syncToSource = useCallback(() => {
+    const snapshot = stateRef.current
+    const { platform } = snapshot
+    const patch = snapshot.bodyPatches[platform]
+    if (!patch || selectSyncBlockReason(snapshot)) return
+    if (!window.confirm('同步到源稿会把当前平台的正文改动写入左侧 Markdown，可能覆盖左侧同段改动；其它平台需重新排版。是否继续？')) return
+    if (snapshot !== stateRef.current) return
+    const reject = (reason: string) => dispatch({ type: 'sync/rejected', platform, patch, reason })
+    try {
+      const boundAssets = { ...snapshot.boundAssets, ...patch.assets }
+      const result = syncArticleSource({
+        baselineMarkdown: patch.mapping.markdown, baselineHtml: patch.mapping.html, html: patch.html, boundAssets,
+      })
+      if (result.markdown === null || result.issue !== null) {
+        reject(`未同步：${result.issue ?? '无法确认改动对应的源稿范围。'}`)
+        return
+      }
+      const markdown = rebaseSourceChanges(patch.syncedMarkdown, result.markdown, snapshot.markdown)
+      if (markdown === null) {
+        reject('未同步：无法在当前源稿中唯一定位改动，左侧保持原样。请在左侧修改对应段落。')
+        return
+      }
+      const usedPaths = new Set(ports.collectImages(ports.parse(markdown)))
+      const assets = Object.fromEntries(Object.entries(patch.assets).filter(([path]) => usedPaths.has(path)))
+      let document: RenderedDocument | null = null
+      if (markdown !== snapshot.markdown) {
+        const report = ports.typeset(typesetInput(ports, { ...snapshot, markdown, boundAssets: { ...snapshot.boundAssets, ...assets } }), platformOf(platform))
+        const outcome = report.results.find((entry) => entry.platform === platform)?.outcome
+        if (report.parseError || !outcome?.ok) {
+          reject('未同步：修改后的源稿无法生成当前平台的成稿，左侧保持原样。请在左侧修改或撤销右侧改动。')
+          return
+        }
+        document = outcome.document
+      }
+      dispatch({ type: 'sync/to-source', platform, patch, markdown, projectedMarkdown: result.markdown, document, assets })
+    } catch (error) {
+      reject(`未同步，左侧源稿保持原样：${reasonOf(error)}`)
+    }
+  }, [dispatch, ports])
+
+  const discardPatch = useCallback(() => {
+    dispatch({ type: 'patch/discarded', platform: stateRef.current.platform })
+  }, [dispatch])
 
   const importFiles = useCallback(async (files: readonly File[]) => {
     if (files.length === 0) return
@@ -332,10 +365,10 @@ export function useStudio(ports: StudioPorts): StudioApi {
       return
     }
     const [file] = files
-    const revision = stateRef.current.revision
+    const { revision, bodyPatches } = stateRef.current
     const outcome = await readMarkdownFile(file)
     if (request !== importRequest.current) return
-    if (revision !== stateRef.current.revision) {
+    if (revision !== stateRef.current.revision || bodyPatches !== stateRef.current.bodyPatches) {
       dispatch({
         type: 'import/failed',
         message: `未导入「${file.name}」：读取期间稿件有改动。`,
@@ -346,7 +379,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
     if (outcome.ok) {
       const current = stateRef.current
       const hasDraft = !isEmptyDraft(current) || current.titleOverride.trim() !== '' ||
-        Object.keys(current.boundAssets).length > 0 || Object.keys(current.bodyEdits).length > 0
+        Object.keys(current.boundAssets).length > 0 || Object.keys(current.bodyPatches).length > 0
       if (hasDraft && !window.confirm(`导入「${outcome.fileName}」会替换当前稿件，并清空手填标题和图片配对。是否替换？`)) return
       dispatch({
         type: 'import/succeeded',
@@ -370,8 +403,8 @@ export function useStudio(ports: StudioPorts): StudioApi {
       if (!payload) return
 
       const review = reviewPublishDocument(document)
-      const warnings = [...previewWarnings, ...document.warnings]
-      const name = platformOf(platform).name
+      const { capabilities, name } = platformOf(platform)
+      const warnings = [...previewWarnings, ...reassessWarnings(document.warnings, document.html, capabilities), ...assessExternalLinkReview(review)]
       const notices: string[] = []
       if (warnings.length > 0) {
         const examples = [...new Set(warnings.map(({ message }) => message))].slice(0, 2)
@@ -393,7 +426,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
       const isCurrent = () => {
         const current = stateRef.current
         return request === copyRequest.current && current.revision === snapshot.revision &&
-          current.report === snapshot.report && current.bodyEdits === snapshot.bodyEdits && current.platform === platform && !current.typesetting
+          current.report === snapshot.report && current.bodyPatches === snapshot.bodyPatches && current.platform === platform && !current.typesetting
       }
       if (noticeTimer.current !== null) {
         window.clearTimeout(noticeTimer.current)
@@ -473,6 +506,14 @@ export function useStudio(ports: StudioPorts): StudioApi {
 
   const platform = platformOf(state.platform)
   const document = selectActiveDocument(state)
+  const activeCapabilities = platform.capabilities
+  // 兼容性提示跟着当前成稿实时重算：编辑后删掉的链接、表格不只留在旧快照里。
+  // 成稿文字用字符串比较即可，计算只在 html、警告或平台变化时发生。
+  const baseWarnings = document?.warnings ?? NO_WARNINGS
+  const warnings = useMemo(
+    () => document ? reassessWarnings(baseWarnings, document.html, activeCapabilities) : NO_WARNINGS,
+    [activeCapabilities, baseWarnings, document],
+  )
   const failure = selectActiveFailure(state)
   const titleCandidate = parsed.document?.title ?? null
   const manualTitle = state.titleOverride.trim()
@@ -485,13 +526,17 @@ export function useStudio(ports: StudioPorts): StudioApi {
     }
     return reviews
   }, [state.report])
-  const bodyEdit = state.bodyEdits[state.platform]
+  const contentBaseline = useMemo(() => {
+    const outcome = state.report?.results.find((entry) => entry.platform === state.platform)?.outcome
+    return outcome?.ok ? censusOf(outcome.document.html) : null
+  }, [state.platform, state.report])
+  const bodyPatch = state.bodyPatches[state.platform]
   const publishReview = useMemo(() => {
     if (sharedCopyBlockReason !== null || !originalBody?.ok) return null
-    return bodyEdit
-      ? reviewPublishDocument({ ...originalBody.document, html: bodyEdit.html, plainText: bodyEdit.plainText })
+    return bodyPatch
+      ? reviewPublishDocument({ ...originalBody.document, html: bodyPatch.html, plainText: bodyPatch.plainText })
       : baselineReviews.get(state.platform) ?? null
-  }, [baselineReviews, bodyEdit, originalBody, sharedCopyBlockReason, state.platform])
+  }, [baselineReviews, bodyPatch, originalBody, sharedCopyBlockReason, state.platform])
   const copyBlockReason = sharedCopyBlockReason ?? (document && !hasCopyableBody(document)
     ? '这篇稿子没有可复制的正文；补充正文后重新排版。'
     : null)
@@ -516,8 +561,9 @@ export function useStudio(ports: StudioPorts): StudioApi {
     imageSources,
     unpairedImages,
     remoteImages,
-    warnings: document?.warnings ?? [],
+    warnings: [...warnings, ...assessExternalLinkReview(publishReview)],
     publishReview,
+    contentBaseline: sharedCopyBlockReason === null && state.typesetFailure === null ? contentBaseline : null,
     document,
     failure,
     succeededPlatforms: selectSucceededPlatforms(state),
@@ -528,7 +574,11 @@ export function useStudio(ports: StudioPorts): StudioApi {
     selectPlatform,
     selectTemplate,
     editBody,
-    bodySync: state.bodyEdits[state.platform] ?? null,
+    bodyPatch: bodyPatch ?? null,
+    patchBlockReason: selectPatchBlockReason(state),
+    syncBlockReason: selectSyncBlockReason(state),
+    syncToSource,
+    discardPatch,
     runTypeset,
     importFiles,
     copy,

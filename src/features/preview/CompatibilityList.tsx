@@ -14,7 +14,19 @@ export interface CompatibilityListProps {
   readonly warnings: readonly CompatWarning[]
   readonly expanded: boolean
   readonly onToggle: () => void
-  readonly onLocate?: (warning: CompatWarning) => boolean
+  /** 定位结果：命中原文、只落到段落、或找不到；界面按三种情况给出不同反馈。 */
+  readonly onLocate?: (warning: CompatWarning) => LocateFeedback
+}
+
+export interface LocateFeedback {
+  readonly status: 'located' | 'block' | 'unavailable'
+  readonly message?: string
+}
+
+const LOCATE_NOTICE: Record<LocateFeedback['status'], string | null> = {
+  located: null,
+  block: '这段文字已经改过，已定位到它所在的段落。',
+  unavailable: '当前无法可靠定位，请按原文片段查找。',
 }
 
 /**
@@ -28,7 +40,7 @@ export function CompatibilityList({
   onToggle,
   onLocate,
 }: CompatibilityListProps) {
-  const [unavailable, setUnavailable] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ id: string; text: string } | null>(null)
   const blockers = warnings.filter((warning) => warning.severity === 'blocker').length
   const rest = warnings.length - blockers
   const summary = blockers > 0
@@ -76,12 +88,20 @@ export function CompatibilityList({
                     className="btn btn--ghost btn--small"
                     type="button"
                     aria-label={`定位 ${warning.message}`}
-                    onClick={() => setUnavailable(onLocate(warning) ? null : warning.id)}
+                    onClick={() => {
+                      const feedback = onLocate(warning)
+                      const text = feedback.message ?? LOCATE_NOTICE[feedback.status]
+                      setNotice(text ? { id: warning.id, text } : null)
+                    }}
                   >
                     定位
                   </button>
                 ) : null}
-                {unavailable === warning.id ? <p className="compat__action" role="status">当前无法可靠定位，请按原文片段查找。</p> : null}
+                {notice?.id === warning.id ? <p className="compat__action" role="status">{notice.text}</p> : null}
+                {warning.source === 'source' ? (
+                  // 成稿里看不出原文的项：可能已经在编辑时改掉了，提示用户重新排版确认。
+                  <p className="compat__action" data-tone="quiet">可能已修复 · 重新排版确认</p>
+                ) : null}
                 {warning.excerpt.trim() === '' ? null : (
                   <p className="compat__excerpt">
                     <span className="compat__excerpt-label">原文片段</span>

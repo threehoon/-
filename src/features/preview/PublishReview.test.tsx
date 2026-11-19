@@ -1,0 +1,166 @@
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { PlatformDefinition } from '@/core/types'
+import type { PublishReviewResult } from '@/core/publish-review/review'
+import { reviewPublishDocument } from '@/core/publish-review/review'
+import type { StudioStatus } from '@/app/studio-state'
+import { PublishReview } from './PublishReview'
+
+const PLATFORM: PlatformDefinition = {
+  id: 'wechat',
+  name: '微信公众号',
+  shortName: '公众号',
+  articleLabel: '图文正文',
+  entryUrl: 'https://mp.weixin.qq.com/',
+  capabilities: {
+    tables: 'keep',
+    codeBlocks: 'keep',
+    inlineCode: 'keep',
+    images: 'keep',
+    links: 'keep',
+    blockquotes: 'keep',
+    maxHeadingLevel: 6,
+  },
+  capabilityEvidence: 'pending-user-trial',
+  render: () => ({ ok: false, failure: { platform: 'wechat', code: 'render', reason: '测试替身不渲染' } }),
+}
+
+const HTML = '<p>欢迎参加。</p><p>联系电话：138 0000 0000</p>'
+
+let scroll: HTMLDivElement
+let article: HTMLElement
+let host: HTMLDivElement
+let root: Root
+
+function resultOf(html: string): PublishReviewResult {
+  return reviewPublishDocument({ platform: 'wechat', title: null, html, plainText: '', warnings: [], stats: { blocks: 0, characters: 0 } })
+}
+
+function render(result: PublishReviewResult | null, status: StudioStatus = 'typeset') {
+  act(() => {
+    root.render(<PublishReview platform={PLATFORM} status={status} result={result} failed={false} />)
+  })
+}
+
+function terms(selector: string): string {
+  return host.querySelector(selector)?.textContent ?? ''
+}
+
+function button(label: string): HTMLButtonElement {
+  const found = Array.from(host.querySelectorAll('button')).find((candidate) => candidate.textContent?.includes(label))
+  if (!found) throw new Error(`找不到按钮：${label}`)
+  return found
+}
+
+beforeEach(() => {
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  scroll = document.createElement('div')
+  scroll.className = 'preview__scroll'
+  host = document.createElement('div')
+  const canvas = document.createElement('div')
+  canvas.className = 'preview-canvas'
+  article = document.createElement('article')
+  article.id = 'platform-article'
+  article.innerHTML = HTML
+  canvas.append(article)
+  scroll.append(host, canvas)
+  document.body.append(scroll)
+  root = createRoot(host)
+})
+
+afterEach(() => {
+  act(() => root.unmount())
+  scroll.remove()
+})
+
+describe('发布预检面板', () => {
+  it('每条提示都带一个定位按钮', () => {
+    render(resultOf(HTML))
+    expect(terms('.publish-review__status')).toBe('发现 1 项疑似风险')
+    expect(button('定位').getAttribute('aria-label')).toContain('正文第 2 个文字块')
+  })
+
+  it('一键检测按当前正文重算，删掉的内容不会继续报', () => {
+    render(resultOf(HTML))
+    // 模拟在右侧正文里删掉带电话的段落：面板上的旧结果还在，正文已经变了。
+    act(() => {
+      article.querySelectorAll('p')[1]?.remove()
+    })
+    expect(terms('.publish-review__status')).toBe('发现 1 项疑似风险')
+    act(() => button('一键检测').click())
+    expect(terms('.publish-review__status')).toBe('重新检测 · 本地未发现疑似风险')
+    expect(host.querySelector('.publish-review__findings')).toBeNull()
+    expect(terms('.publish-review__check')).toContain('已按当前正文检测')
+  })
+
+  it('正文改过以后，上次检测的结论不再挂在面板上', () => {
+    render(resultOf(HTML))
+    act(() => button('一键检测').click())
+    expect(terms('.publish-review__status')).toContain('重新检测')
+    render(resultOf('<p>欢迎参加。</p>'))
+    expect(terms('.publish-review__status')).toBe('本地未发现疑似风险')
+    expect(terms('.publish-review__check')).not.toContain('已按当前正文检测')
+  })
+
+  it('源稿改过时不假装检测过，并说明为什么不能检测', () => {
+    render(null, 'stale')
+    expect(terms('.publish-review__status')).toBe('结果已过期，请重新排版')
+    expect(button('一键检测').disabled).toBe(true)
+    expect(terms('#publish-review-block')).toContain('重新排版后再检测')
+    // 禁用原因留在折叠区外面，键盘用户即使跳过了不可聚焦的按钮也能读到。
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
+    expect(button('一键检测').getAttribute('aria-describedby')).toBe('publish-review-block')
+  })
+
+  it('未排版时说明先生成成稿', () => {
+    render(null, 'ready')
+    expect(terms('.publish-review__status')).toBe('等待一键排版')
+    expect(button('一键检测').disabled).toBe(true)
+    expect(button('一键检测').title).toContain('一键排版')
+    expect(terms('.publish-review__check')).toContain('一键排版')
+  })
+
+  it('定位命中正文时不额外报警，正文改动后才提示重新检测', () => {
+    render(resultOf(HTML))
+    act(() => button('定位').click())
+    expect(host.querySelector('.publish-review__check')).toBeNull()
+    act(() => {
+      article.querySelectorAll('p')[1]?.remove()
+    })
+    act(() => button('定位').click())
+    expect(terms('.publish-review__check')).toContain('未能定位')
+  })
+
+  it('手动收起后，改稿又出现新风险时重新展开', () => {
+    render(resultOf('<p>欢迎参加。</p>'))
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
+    act(() => (host.querySelector('.publish-review__summary') as HTMLButtonElement).click())
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
+    // 用户收起后编辑，正文里出现电话：这是新风险，必须重新展开而不是只变色。
+    render(resultOf(HTML))
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
+    expect(terms('.publish-review__status')).toBe('发现 1 项疑似风险')
+  })
+
+  it('风险消失再出现时，不会停在手动收起状态', () => {
+    render(resultOf(HTML))
+    act(() => (host.querySelector('.publish-review__summary') as HTMLButtonElement).click())
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
+    // 改掉电话 → 无风险（面板无内容可看）；再改回电话 → 必须重新展开。
+    render(resultOf('<p>欢迎参加。</p><p>联系电话：</p>'))
+    render(resultOf(HTML))
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
+    expect(terms('.publish-review__status')).toBe('发现 1 项疑似风险')
+  })
+
+  it('有风险时自动展开，收起后仍能一键检测', () => {
+    render(resultOf(HTML))
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
+    act(() => (host.querySelector('.publish-review__summary') as HTMLButtonElement).click())
+    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
+    expect((host.querySelector('#publish-review-body') as HTMLElement).hidden).toBe(true)
+    expect(button('一键检测').disabled).toBe(false)
+  })
+})

@@ -1425,34 +1425,58 @@ code {
   line-height: var(--leading-body);
 }
 
-.preview__scroll:has(.preview-canvas[data-editing='true']) > .publish-review[data-tone='quiet'] {
-  display: none;
+/* 读稿时把预检条钉在预览顶部：点「定位」跳走以后，下一条提示还在手边。 */
+.preview__scroll:not(:has(.preview-canvas[data-editing='true'])) > .publish-review {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: 0 6px 16px rgba(20, 20, 19, 0.05);
+}
+
+/* 有预检条时它自己顶住滚动区上沿，正文不会从上面露出来。 */
+.preview__scroll:has(> .publish-review) {
+  padding-top: 0;
 }
 
 .publish-review[data-tone='warn'] {
   background: var(--warn-soft);
 }
 
+.publish-review__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+}
+
 .publish-review__summary {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--space-10);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  cursor: pointer;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
   color: var(--fg);
+  font: inherit;
   font-weight: 600;
+  text-align: start;
+  cursor: pointer;
 }
 
-.publish-review__summary::-webkit-details-marker { display: none; }
-.publish-review__summary:hover { background: var(--surface-warm); }
-.publish-review[data-tone='warn'] .publish-review__summary:hover { background: var(--surface-sunken); }
-.publish-review[open] .publish-review__chevron { transform: rotate(180deg); }
+.publish-review__summary:hover .publish-review__chevron { color: var(--accent); }
+.publish-review__chevron { transition: transform var(--motion-fast) var(--ease-standard); }
+.publish-review__chevron[data-open='true'] { transform: rotate(180deg); }
 
+.publish-review__action { flex: none; }
+
+/* 状态文案放在折叠按钮外面：按钮的可访问名保持稳定的「发布预检」。 */
 .publish-review__status {
-  justify-self: end;
+  margin-inline-start: auto;
+  min-width: 0;
   text-align: end;
   color: var(--muted);
   font-weight: 400;
@@ -1460,7 +1484,8 @@ code {
 
 .publish-review[data-tone='warn'] .publish-review__status { color: var(--warn); }
 
-.publish-review summary:focus-visible {
+.publish-review summary:focus-visible,
+.publish-review__summary:focus-visible {
   outline: 2px solid var(--accent-strong);
   outline-offset: var(--focus-offset);
 }
@@ -1470,9 +1495,26 @@ code {
   gap: var(--space-3);
   border-top: 1px solid var(--border);
   padding: var(--space-3);
+  /* 钉住时不让展开内容挡住半个预览。 */
+  max-height: 45vh;
+  overflow: auto;
 }
 
+.publish-review__content[hidden] { display: none; }
+
 .publish-review__note { color: var(--muted); }
+
+.publish-review__check {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.publish-review__check[data-tone='warn'] { color: var(--warn); }
+
+/* 禁用原因留在折叠区外面：按钮拿不到焦点时，这句话仍然是页面上可读的文字。 */
+.publish-review__check--bar {
+  padding: 0 var(--space-3) var(--space-2);
+}
 
 .publish-review__findings {
   display: grid;
@@ -1521,7 +1563,7 @@ code {
 .publish-review__manual { padding-inline-start: var(--space-5); }
 
 @media (pointer: coarse) {
-  .publish-review summary, .publish-review__source-list a {
+  .publish-review__summary, .publish-review__source-list a {
     min-height: calc(var(--space-10) + var(--space-1));
   }
 
@@ -1586,6 +1628,13 @@ code {
   text-decoration: underline wavy var(--danger);
 }
 
+/* 从发布预检跳过来时闪一下命中处；不改选区、不改正文，2.4 秒后自动清除。 */
+::highlight(studio-review-issue) {
+  background-color: var(--warn-soft);
+  color: var(--fg);
+  text-decoration: underline wavy var(--warn);
+}
+
 .content-check {
   display: grid;
   justify-items: start;
@@ -1632,6 +1681,12 @@ code {
 .content-check__list strong {
   color: var(--danger);
   font-size: var(--text-sm);
+}
+
+/* 定位反馈：只落到段落或找不到时说明原因，避免点了「定位」没有任何回应。 */
+.content-check__list .content-check__notice {
+  margin-block-start: var(--space-1);
+  color: var(--warning);
 }
 
 .article-title {
@@ -1718,22 +1773,12 @@ code {
   color: var(--danger);
 }
 
-.article-edit__sync:empty {
-  display: none;
-}
-
-.article-edit__sync {
-  display: grid;
-  gap: var(--space-1);
-}
-
 .article-edit__hint[data-tone='success'] {
   color: var(--success);
 }
 
 .article-edit__issue {
-  display: grid;
-  gap: var(--space-1);
+  margin: 0;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--warn);
   border-radius: var(--radius-sm);

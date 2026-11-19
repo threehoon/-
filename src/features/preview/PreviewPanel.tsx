@@ -9,13 +9,13 @@ import type {
   TypesetReport,
   WechatTemplateId,
 } from '@/core/types'
-import type { BodySyncStatus, StudioStatus } from '@/app/studio-state'
+import type { BodyPatch, StudioState, StudioStatus } from '@/app/studio-state'
 import { hasCopyableBody, type StudioApi } from '@/app/use-studio'
 import { formatClock } from '@/app/text'
 import { Icon } from '@/components/Icon'
 import { EditableArticle, type ArticleLayout } from './EditableArticle'
 import { ArticleCheck } from './ArticleCheck'
-import { CompatibilityList, type CompatibilityListProps } from './CompatibilityList'
+import { CompatibilityList, type CompatibilityListProps, type LocateFeedback } from './CompatibilityList'
 import { compatibilityTargets, locateRange } from './issue-locations'
 
 const NO_WARNINGS: readonly CompatWarning[] = []
@@ -34,8 +34,13 @@ export interface PreviewPanelProps {
   readonly generation?: number
   readonly sourceRevision?: number
   readonly onBodyEdit?: StudioApi['editBody']
-  readonly bodyEdited?: boolean
-  readonly bodySync?: BodySyncStatus | null
+  readonly contentBaseline?: StudioApi['contentBaseline']
+  readonly bodyPatch?: BodyPatch | null
+  readonly patchBlockReason?: string | null
+  readonly syncBlockReason?: string | null
+  readonly syncNotice?: StudioState['syncNotice']
+  readonly onSync?: () => void
+  readonly onDiscard?: () => void
   readonly focused?: boolean
   readonly onFocusChange?: (enabled: boolean) => void
   readonly renderActions?: (editAction: ReactNode, focusAction: ReactNode, editing: boolean) => ReactNode
@@ -64,8 +69,13 @@ export function PreviewPanel({
   onBodyEdit,
   generation = 0,
   sourceRevision = 0,
-  bodyEdited = false,
-  bodySync = null,
+  contentBaseline = null,
+  bodyPatch = null,
+  patchBlockReason = null,
+  syncBlockReason = null,
+  syncNotice = null,
+  onSync,
+  onDiscard,
   focused = false,
   onFocusChange,
   renderActions,
@@ -78,22 +88,25 @@ export function PreviewPanel({
   const isStale = status === 'stale'
   const canvas = useRef<HTMLDivElement>(null)
   const [articleRevision, setArticleRevision] = useState(0)
-  const canCheck = status === 'typeset' && failure === null && typesetFailureReason === null
+  const canCheck = status === 'typeset' && failure === null && typesetFailureReason === null && bodyPatch?.state !== 'superseded'
 
-  function locateCompatibility(warning: CompatWarning): boolean {
+  function locateCompatibility(warning: CompatWarning): LocateFeedback {
     const article = canvas.current?.querySelector('#platform-article')
     if (article) {
       const { ranges, images } = compatibilityTargets(article, warning.locations ?? [])
       if (ranges[0]) {
         locateRange(ranges[0])
-        return true
+        return { status: 'located' }
       }
       if (images[0]) {
         images[0].scrollIntoView({ block: 'center' })
-        return true
+        return { status: 'located' }
       }
     }
-    return warning.locations?.some((location) => onLocateSource?.(location)) ?? false
+    const source = warning.locations?.some((location) => onLocateSource?.(location)) ?? false
+    return source
+      ? { status: 'located' }
+      : { status: 'unavailable', message: '当前无法可靠定位，请按原文片段查找。' }
   }
 
   function renderLayout({ action, focusAction, tools, article, editing }: ArticleLayout) {
@@ -221,6 +234,7 @@ export function PreviewPanel({
                 <ArticleCheck
                   key={`${generation}:${sourceRevision}:${articleRevision}:${platform.id}:${template}:${canCheck}`}
                   enabled={canCheck}
+                  baseline={contentBaseline}
                   inEditor={Boolean(editing)}
                   warnings={canCheck ? compatibilityWarnings : NO_WARNINGS}
                 />
@@ -255,7 +269,7 @@ export function PreviewPanel({
   if (!document) return renderLayout({})
 
   const original = report?.results.find((result) => result.platform === platform.id)?.outcome
-  const canEdit = status === 'typeset' && failure === null && hasCopyableBody(original?.ok ? original.document : document)
+  const canEdit = status === 'typeset' && failure === null && patchBlockReason === null && (bodyPatch?.state === 'linked' || hasCopyableBody(original?.ok ? original.document : document))
   return (
     <EditableArticle
       key={`${platform.id}-${generation}`}
@@ -265,8 +279,11 @@ export function PreviewPanel({
         setArticleRevision((previous) => previous + 1)
       } : undefined}
       onImageError={onImageError}
-      edited={bodyEdited}
-      sync={bodySync}
+      patch={bodyPatch}
+      syncBlockReason={syncBlockReason}
+      syncNotice={syncNotice}
+      onSync={onSync}
+      onDiscard={status === 'typesetting' ? undefined : onDiscard}
       focused={focused}
       onFocusChange={onFocusChange}
       renderLayout={renderLayout}

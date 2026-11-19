@@ -34,7 +34,7 @@ import { inspectUrl } from '../security/policy'
 import { escapeHtml, styleAttribute, truncateExcerpt } from './html'
 import type { RenderTheme } from './theme'
 import {
-  CODE_SOURCE_ATTR, FORMAT_SOURCE_ATTR, IMAGE_SOURCE_ATTR, TABLE_SOURCE_ATTR, TITLE_SOURCE_ATTR,
+  CODE_SOURCE_ATTR, DOWNGRADED_TABLE_ATTR, FORMAT_SOURCE_ATTR, IMAGE_SOURCE_ATTR, TABLE_SOURCE_ATTR, TITLE_SOURCE_ATTR,
   sourceAttribute, sourceMarker,
 } from './source-markers'
 
@@ -453,6 +453,7 @@ class BlockRenderer {
       return { rich: rich.html === '' ? { html: escapeHtml(label), text: label } : rich, label }
     }) ?? []
     const dataRows = rows.slice(1)
+    const tableMarker = this.metadata(DOWNGRADED_TABLE_ATTR, String(this.warningSeq))
 
     if (dataRows.length === 0) {
       const text = columnNames.map(({ rich, label }) => rich.text || label).join(' ｜ ')
@@ -464,7 +465,7 @@ class BlockRenderer {
         truncateExcerpt(text),
       )
       return columnNames.length === 0 ? EMPTY_PIECE : {
-        html: `<p${styleAttribute(this.theme.paragraph)}>${columnNames.map(({ rich }) => rich.html).join(' ｜ ')}</p>`,
+        html: `<p${styleAttribute(this.theme.paragraph)}${tableMarker}>${columnNames.map(({ rich }) => rich.html).join(' ｜ ')}</p>`,
         text,
       }
     }
@@ -479,7 +480,7 @@ class BlockRenderer {
         return { html: `${head?.html ?? escapeHtml(label)}：${value.html}`, text: `${head?.text || label}：${value.text}` }
       })
       return {
-        html: `<p${styleAttribute(this.theme.paragraph)}>${cells.map(({ html }) => html).join('<br />')}</p>`,
+        html: `<p${styleAttribute(this.theme.paragraph)}${tableMarker}>${cells.map(({ html }) => html).join('<br />')}</p>`,
         text: cells.map(({ text }) => text).join('\n'),
       }
     })

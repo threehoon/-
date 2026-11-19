@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RenderedDocument } from '@/core/types'
-import type { BodySyncStatus } from '@/app/studio-state'
+import type { BodyPatch, StudioState } from '@/app/studio-state'
 import type { LocalArticleImage, StudioApi } from '@/app/use-studio'
 import { reasonOf } from '@/app/text'
 import { Icon } from '@/components/Icon'
@@ -41,8 +41,11 @@ interface ArticleProps {
   readonly document: RenderedDocument
   readonly onEdit?: StudioApi['editBody']
   readonly onImageError?: (src: string) => void
-  readonly edited: boolean
-  readonly sync: BodySyncStatus | null
+  readonly patch: BodyPatch | null
+  readonly syncBlockReason: string | null
+  readonly syncNotice: StudioState['syncNotice']
+  readonly onSync?: () => void
+  readonly onDiscard?: () => void
   readonly focused: boolean
   readonly onFocusChange?: (enabled: boolean) => void
   readonly renderLayout: (parts: ArticleLayout) => ReactNode
@@ -150,7 +153,7 @@ function restoreReadingPosition(article: HTMLElement, position: LayoutPosition) 
   else if (position.top >= 0 && change !== 0) article.ownerDocument.defaultView?.scrollBy(0, change)
 }
 
-export function EditableArticle({ document, onEdit, onImageError, edited, sync, focused, onFocusChange, renderLayout }: ArticleProps) {
+export function EditableArticle({ document, onEdit, onImageError, patch, syncBlockReason, syncNotice, onSync, onDiscard, focused, onFocusChange, renderLayout }: ArticleProps) {
   const [editingHtml, setEditingHtml] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -467,7 +470,7 @@ export function EditableArticle({ document, onEdit, onImageError, edited, sync, 
     </button>
   ) : null
 
-  const tools = editing || (onEdit && edited) || sync ? (
+  const tools = editing || patch || syncNotice ? (
     <div className="article-edit">
       {editing ? (
         <EditorToolbar
@@ -504,24 +507,35 @@ export function EditableArticle({ document, onEdit, onImageError, edited, sync, 
       {editing ? (
         <div className="article-edit__guide">
           <p className="article-edit__hint" id="article-edit-hint">
-            选中文字可调字体和字号，也可把单张图片拖到正文中。本地图片仅在本次会话配对。
+            {!patch ? <span id="article-patch-status">编辑仅影响当前平台。 </span> : null}选中文字可改字体和字号，也可拖入单张图片。
           </p>
           <button type="submit" form={ARTICLE_CHECK_FORM_ID} className="btn btn--ghost btn--small">
             一键检查内容
           </button>
         </div>
       ) : null}
-      <div className="article-edit__sync" role="status">
-        {sync?.issue ? (
-          <div className="article-edit__issue">
-            <strong>部分修改未同步到 Markdown</strong>
-            <p>{sync.issue}</p>
+      {patch ? (
+        <div className="article-edit__guide">
+          <p className="article-edit__hint" id="article-patch-status" role="status">
+            {patch.state === 'superseded' ? patch.reason : patch.state === 'diverged'
+              ? '右侧有未同步的改动，仅影响当前平台。'
+              : '右侧正文与源稿关联；编辑默认只影响当前平台。'}
+            {patch.platformStyle ? ' 部分样式仅保留在当前平台成稿。' : ''}
+          </p>
+          <div className="article-edit__actions">
+              <button type="button" className="btn btn--secondary btn--small" disabled={!onSync || syncBlockReason !== null || reading}
+                aria-describedby="article-patch-status" onClick={() => {
+                  if (!readingImage.current && !composing.current) onSync?.()
+                }}>同步到源稿</button>
+              <button type="button" className="btn btn--ghost btn--small" disabled={!onDiscard}
+                aria-describedby="article-patch-status" onClick={onDiscard}>撤销右侧改动</button>
           </div>
-        ) : null}
-        {sync?.synced && !sync.issue ? <p className="article-edit__hint" data-tone="success">正文已同步到 Markdown</p> : null}
-        {sync?.platformStyle ? <p className="article-edit__hint">部分样式仅保留在当前平台成稿。</p> : null}
-        {onEdit && edited && !editing && !sync ? <p className="article-edit__hint">当前平台正文已修改，复制时会使用这一版。</p> : null}
-      </div>
+        </div>
+      ) : null}
+      {syncNotice ? (
+        <p className={syncNotice.tone === 'failure' ? 'article-edit__issue' : 'article-edit__hint'}
+          data-tone={syncNotice.tone} role="status">{syncNotice.message}</p>
+      ) : null}
       <input
         ref={picker}
         type="file"
@@ -617,5 +631,5 @@ export function EditableArticle({ document, onEdit, onImageError, edited, sync, 
     />
   )
 
-  return renderLayout({ action, focusAction, tools, article, editing: editingHtml !== null })
+  return renderLayout({ action, focusAction, tools, article, editing })
 }
