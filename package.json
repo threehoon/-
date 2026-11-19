@@ -1,0 +1,45 @@
+{
+  "name": "markdown-multi-platform-typesetter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "多平台 Markdown 排版工具：一份源稿生成微信公众号、头条号、搜狐号、百家号、知乎与腾讯内容开放平台的正文版本。",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview --port 4173 --strictPort"
+  },
+  "dependencies": {
+    "hast-util-to-html": "^9.0.5",
+    "mdast-util-to-string": "^4.0.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.0.0",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^22.18.13",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "jsdom": "^27.1.0",
+    "playwright-core": "^1.65.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.2.2",
+    "vitest": "^3.2.4"
+  }
+}

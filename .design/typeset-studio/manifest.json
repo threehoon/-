@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "uma-design-project/v1",
+  "id": "typeset-studio",
+  "name": "多平台 Markdown 排版工作台",
+  "sourceRole": "project",
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css",
+    "components": "components.html"
+  }
+}

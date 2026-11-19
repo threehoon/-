@@ -1,0 +1,98 @@
+import { useState } from 'react'
+import type { CompatWarning, WarningSeverity } from '@/core/types'
+import { Icon } from '@/components/Icon'
+import { clipExcerpt } from '@/app/text'
+
+const SEVERITY_LABEL: Record<WarningSeverity, string> = {
+  blocker: '必须处理',
+  attention: '注意',
+  info: '提示',
+}
+
+export interface CompatibilityListProps {
+  readonly platformName: string
+  readonly warnings: readonly CompatWarning[]
+  readonly expanded: boolean
+  readonly onToggle: () => void
+  readonly onLocate?: (warning: CompatWarning) => boolean
+}
+
+/**
+ * 复制按钮旁边的兼容性清单：默认展开（复制前必须看得见），
+ * blocker 前置实心标记，并同时写出文字等级，不靠颜色单独传达。
+ */
+export function CompatibilityList({
+  platformName,
+  warnings,
+  expanded,
+  onToggle,
+  onLocate,
+}: CompatibilityListProps) {
+  const [unavailable, setUnavailable] = useState<string | null>(null)
+  const blockers = warnings.filter((warning) => warning.severity === 'blocker').length
+  const rest = warnings.length - blockers
+  const summary = blockers > 0
+    ? rest > 0
+      ? `${blockers} 项需处理，另有 ${rest} 项提示 · 复制前需确认`
+      : `${blockers} 项需处理 · 复制前需确认`
+    : `${warnings.length} 项兼容性提示 · 复制前需确认`
+
+  return (
+    <section className="compat" aria-labelledby="compat-title">
+      <div className="compat__header">
+        <h2 className="compat__title" id="compat-title">
+          {platformName}兼容性
+        </h2>
+        <p className="compat__summary">{summary}</p>
+        <button
+          className="compat__toggle"
+          type="button"
+          aria-expanded={expanded}
+          aria-controls="compat-body"
+          onClick={onToggle}
+        >
+          {expanded ? '收起清单' : `展开清单（${warnings.length}）`}
+          <Icon name="chevron" className="compat__toggle-icon" data-open={expanded} />
+        </button>
+      </div>
+
+      <div id="compat-body" hidden={!expanded}>
+        <ul className="compat__list">
+          {warnings.map((warning) => (
+            <li
+              key={warning.id}
+              className="compat__item"
+              data-severity={warning.severity}
+            >
+              <span className="compat__marker" aria-hidden="true" />
+              <div className="compat__content">
+                <p className="compat__line">
+                  <span className="compat__severity">{SEVERITY_LABEL[warning.severity]}</span>
+                  <span className="compat__message">{warning.message}</span>
+                </p>
+                <p className="compat__action">{warning.action}</p>
+                {onLocate && warning.locations?.length ? (
+                  <button
+                    className="btn btn--ghost btn--small"
+                    type="button"
+                    aria-label={`定位 ${warning.message}`}
+                    onClick={() => setUnavailable(onLocate(warning) ? null : warning.id)}
+                  >
+                    定位
+                  </button>
+                ) : null}
+                {unavailable === warning.id ? <p className="compat__action" role="status">当前无法可靠定位，请按原文片段查找。</p> : null}
+                {warning.excerpt.trim() === '' ? null : (
+                  <p className="compat__excerpt">
+                    <span className="compat__excerpt-label">原文片段</span>
+                    <code>{clipExcerpt(warning.excerpt)}</code>
+                  </p>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  )
+}

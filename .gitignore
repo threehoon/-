@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.local
+.vite/
+screenshots/
+.pnpm-store/
+.tmp/
+
+# 本地过程文档，不随公开仓库发布
+.uma/
+.design/typeset-studio/REVIEW.md

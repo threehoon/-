@@ -1,0 +1,60 @@
+<!-- 多平台 Markdown 排版工作台 · 组件样例
+     仅示范结构与令牌用法，真实实现位于 src/ 下的 React 组件。 -->
+<div class="sample-shell">
+  <header class="sample-topbar">
+    <span class="sample-brand">多平台排版</span>
+    <span class="status-chip" data-state="stale">源稿已修改 · 需重新排版</span>
+    <button class="btn btn-primary" type="button">一键排版</button>
+  </header>
+
+  <nav class="platform-tabs" aria-label="平台">
+    <button class="platform-tab" aria-current="page" type="button">
+      <span class="platform-tab__name">公众号</span>
+      <span class="platform-tab__meta">图文正文</span>
+    </button>
+    <button class="platform-tab" type="button">
+      <span class="platform-tab__name">头条</span>
+      <span class="platform-tab__meta">长文</span>
+    </button>
+    <button class="platform-tab" type="button">
+      <span class="platform-tab__name">知乎</span>
+      <span class="platform-tab__meta">专栏文章（非回答）</span>
+    </button>
+  </nav>
+
+  <section class="toolbar">
+    <button class="btn btn-secondary" type="button">复制标题</button>
+    <button class="btn btn-primary" type="button">复制正文</button>
+    <button class="btn btn-secondary" type="button" aria-controls="sample-article">编辑正文</button>
+    <a class="btn btn-ghost" href="https://mp.weixin.qq.com/" target="_blank" rel="noreferrer">打开平台</a>
+  </section>
+
+  <section class="warning-list" aria-labelledby="warning-title">
+    <h2 class="section-title" id="warning-title">复制前需要处理 2 项</h2>
+    <ul>
+      <li class="warning-item" data-severity="blocker">
+        <span class="warning-item__marker" aria-hidden="true"></span>
+        <div>
+          <p class="warning-item__message">第 3 段的表格已转为「列名：值」段落，4 列数据按原行序保留。</p>
+          <p class="warning-item__action">如需真实表格，请粘贴后在平台编辑器中重新插入。</p>
+        </div>
+      </li>
+      <li class="warning-item" data-severity="attention">
+        <span class="warning-item__marker" aria-hidden="true"></span>
+        <div>
+          <p class="warning-item__message">图片 images/cover.png 未配对本地文件，已留补插标记。</p>
+          <p class="warning-item__action">在左侧选择该文件后重新排版，或在此位置手动补插。</p>
+        </div>
+      </li>
+    </ul>
+  </section>
+
+  <section class="preview-canvas">
+    <article class="wechat-article" id="sample-article">
+      <h1 class="wechat-article__title">一篇中文样稿</h1>
+      <p>正文段落，行高 1.75，字号 16px，颜色接近墨色。</p>
+      <h2 class="wechat-article__h2">第一个小标题</h2>
+      <blockquote class="wechat-article__quote">引用文字保留边界与缩进。</blockquote>
+    </article>
+  </section>
+</div>

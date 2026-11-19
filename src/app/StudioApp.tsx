@@ -1,0 +1,311 @@
+import { useCallback, useMemo, useState, type CSSProperties } from 'react'
+import { WorkspaceDivider } from '@/app/WorkspaceDivider'
+import type { CompatibilityLocation, CompatWarning, PlatformId, RenderedDocument } from '@/core/types'
+import type { StudioApi } from '@/app/use-studio'
+import { selectActiveTemplate, selectPlatformResult, selectTemplateEditConflict } from '@/app/studio-state'
+import { formatClock } from '@/app/text'
+import { Icon } from '@/components/Icon'
+import { CopyActions } from '@/features/actions/CopyActions'
+import { PlatformTabs } from '@/features/preview/PlatformTabs'
+import { WechatTemplatePicker } from '@/features/preview/WechatTemplatePicker'
+import { platformTabId } from '@/features/preview/panel-ids'
+import { PublishReview } from '@/features/preview/PublishReview'
+import { PreviewPanel } from '@/features/preview/PreviewPanel'
+import { currentSourceSpan } from '@/features/preview/issue-locations'
+import { SourcePanel } from '@/features/source/SourcePanel'
+
+const PANEL_ID = 'platform-panel'
+
+function statusLabel(api: StudioApi): string {
+  const typesetAt = api.state.report?.typesetAt ?? null
+  switch (api.status) {
+    case 'empty': {
+      return '未开始 · 等待源稿'
+    }
+    case 'ready': {
+      return '源稿就绪 · 尚未排版'
+    }
+    case 'typesetting': {
+      return '正在排版…'
+    }
+    case 'typeset': {
+      return typesetAt === null ? '已排版' : `已排版 · ${formatClock(typesetAt)}`
+    }
+    case 'stale': {
+      return '源稿已修改 · 需重新排版'
+    }
+    case 'parse-error': {
+      return '源稿无法解析'
+    }
+    default: {
+      return '状态未知'
+    }
+  }
+}
+
+function failedPlatformIds(api: StudioApi): readonly PlatformId[] {
+  const report = api.state.report
+  if (!report || report.parseError !== null) {
+    return []
+  }
+  return report.results
+    .filter((result) => !result.outcome.ok)
+    .map((result) => result.platform)
+}
+
+function platformName(api: StudioApi, id: PlatformId): string {
+  return api.platforms.find((candidate) => candidate.id === id)?.name ?? id
+}
+
+/** 1440×900 三段式工作台：顶栏 / 源稿 / 预览 + 平台栏。 */
+export function StudioApp({ api }: { readonly api: StudioApi }) {
+  const { state, platform } = api
+  const typesetting = state.typesetting
+  const canTypeset = state.markdown.trim() !== '' && !typesetting
+  const failed = failedPlatformIds(api)
+  const [sourceShare, setSourceShare] = useState<number | null>(null)
+  const [focusedArticle, setFocusedArticle] = useState<{
+    readonly generation: number
+    readonly platform: PlatformId
+  } | null>(null)
+  const focused = api.document !== null && focusedArticle?.generation === state.generation && focusedArticle.platform === state.platform
+  const changeFocus = useCallback((enabled: boolean) => {
+    setFocusedArticle(enabled ? { generation: state.generation, platform: state.platform } : null)
+  }, [state.generation, state.platform])
+  const workspaceStyle = sourceShare === null ? undefined : { '--source-share': `${sourceShare * 100}%` } as CSSProperties
+  const [imageFailures, setImageFailures] = useState<Readonly<Partial<Record<PlatformId, {
+    readonly generation: number
+    readonly document: RenderedDocument | null
+    readonly sources: ReadonlySet<string>
+  }>>>>({})
+  const activeOutcome = selectPlatformResult(state, platform.id)?.outcome
+  const baseline = activeOutcome?.ok ? activeOutcome.document : state.retainedDocuments[platform.id] ?? null
+  const knownFailures = imageFailures[platform.id]
+  const failedSources = knownFailures?.generation === state.generation && knownFailures.document === baseline
+    ? knownFailures.sources
+    : null
+  const articleHtml = api.document?.html
+  const previewWarnings = useMemo(() => {
+    if (!failedSources || !articleHtml) return []
+    // Match the current article, not the old image index: editing can remove or reorder images.
+    const fragment = document.createElement('template')
+    fragment.innerHTML = articleHtml
+    const warnings: CompatWarning[] = []
+    fragment.content.querySelectorAll('img[src]').forEach((image, index) => {
+      const src = image.getAttribute('src') ?? ''
+      if (!failedSources.has(src)) return
+      const alt = image.getAttribute('alt') ?? ''
+      const boundPath = Object.keys(state.boundAssets).find((path) => state.boundAssets[path] === src)
+      const local = boundPath !== undefined || /^(?:blob:|data:)/i.test(src)
+      warnings.push({
+        id: `preview-image-error-${index + 1}`,
+        kind: 'image',
+        severity: 'blocker',
+        message: `第 ${index + 1} 张预览图片${alt ? `「${alt}」` : ''}加载失败。`,
+        action: local
+          ? '请在本地图片配对区重选有效文件后重新排版，或在平台编辑器的原位置手动补插。'
+          : '请检查图片地址是否可访问、换用有效地址后重新排版，或在平台编辑器的原位置手动补插。',
+        excerpt: local ? boundPath ?? '本地配对图片' : src,
+        locations: [{ kind: 'image', index }],
+      })
+    })
+    return warnings
+  }, [articleHtml, failedSources, state.boundAssets])
+  const warnings = [...api.warnings, ...previewWarnings].filter(({ severity }) => !focused || severity === 'blocker')
+  const activeTemplate = selectActiveTemplate(state)
+  const showTemplates = !focused && api.document !== null &&
+    api.copyBlockReason === null && state.typesetFailure === null
+
+  function locateSource(location: CompatibilityLocation): boolean {
+    const baselineMarkdown = state.platformTypesetMarkdown[platform.id] ?? state.typesetMarkdown
+    const span = currentSourceSpan(location, baselineMarkdown, state.markdown)
+    const field = document.querySelector<HTMLTextAreaElement>('#source-markdown')
+    if (!span || !field) return false
+    // The browser normalizes Windows line breaks in the textarea, but Markdown
+    // locations refer to the source as imported.
+    const normalizeLines = (text: string) => text.replace(/\r\n?/g, '\n')
+    const value = normalizeLines(state.markdown)
+    const start = normalizeLines(state.markdown.slice(0, span.start)).length
+    const end = normalizeLines(state.markdown.slice(0, span.end)).length
+    const select = () => {
+      if (!field.isConnected || field.value !== value) return
+      field.focus()
+      field.setSelectionRange(start, end)
+    }
+    if (focused) {
+      changeFocus(false)
+      window.requestAnimationFrame(select)
+    } else {
+      select()
+    }
+    return true
+  }
+
+  function reportImageError(src: string) {
+    if (!state.report) return
+    const generation = state.generation
+    setImageFailures((previous) => {
+      const entry = previous[platform.id]
+      const sources = entry?.generation === generation && entry.document === baseline ? entry.sources : null
+      if (sources?.has(src)) return previous
+      return { ...previous, [platform.id]: { generation, document: baseline, sources: new Set([...(sources ?? []), src]) } }
+    })
+  }
+
+  return (
+    <div className="studio">
+      <a className="skip-link" href="#source-markdown" hidden={focused}>
+        跳到源稿编辑区
+      </a>
+
+      <header className="topbar" hidden={focused}>
+        <div className="topbar__identity">
+          <span className="topbar__mark" aria-hidden="true">
+            <Icon name="file" size={18} />
+          </span>
+          <div>
+            <h1 className="topbar__title">多平台排版</h1>
+            <p className="topbar__subtitle">一份 Markdown，六个平台的正文</p>
+          </div>
+        </div>
+
+        <div className="topbar__state">
+          <p className="status-chip" data-state={api.status}>
+            <span className="status-chip__marker" aria-hidden="true" />
+            <span className="status-chip__text" role="status" aria-live="polite">
+              {statusLabel(api)}
+            </span>
+          </p>
+          <p className="topbar__shortcut">Ctrl / ⌘ + Enter 一键排版</p>
+        </div>
+
+        <div className="topbar__actions">
+          <button
+            className="btn btn--primary"
+            type="button"
+            onClick={api.runTypeset}
+            disabled={!canTypeset}
+            aria-busy={typesetting}
+            aria-describedby={state.markdown.trim() === '' ? 'typeset-block-reason' : undefined}
+          >
+            <Icon name="refresh" className={typesetting ? 'icon-spin' : undefined} />
+            {typesetting ? '正在排版…' : '一键排版'}
+          </button>
+          {state.markdown.trim() === '' ? (
+            <p className="topbar__reason" id="typeset-block-reason">
+              先粘贴或导入源稿
+            </p>
+          ) : null}
+        </div>
+      </header>
+
+      <main className="workspace" data-focus={focused} style={workspaceStyle}>
+        <div className="workspace__source" id="workspace-source" hidden={focused}>
+          <SourcePanel
+            markdown={state.markdown}
+            onMarkdownChange={api.setMarkdown}
+            onImport={(files) => {
+              void api.importFiles(files)
+            }}
+            importNotice={state.importNotice}
+            onDismissImportNotice={api.dismissImportNotice}
+            status={api.status}
+            stats={api.stats}
+            parseErrorMessage={api.parseErrorMessage}
+            titleOverride={state.titleOverride}
+            onTitleChange={api.setTitle}
+            titleCandidate={api.titleCandidate}
+            remoteImages={api.remoteImages}
+            localImages={api.imageSources.filter((raw) => !api.remoteImages.includes(raw))}
+            boundAssets={state.boundAssets}
+            assetNotice={state.assetNotice}
+            onBindAsset={api.bindAsset}
+            onUnbindAsset={api.unbindAsset}
+          />
+        </div>
+        <WorkspaceDivider preferredShare={sourceShare} onShareChange={setSourceShare} hidden={focused} />
+
+        <section className="panel panel--preview" aria-label="成稿与复制">
+          <div hidden={focused}>
+            <PlatformTabs
+              platforms={api.platforms}
+              activeId={state.platform}
+              failedIds={failed}
+              panelId={PANEL_ID}
+              onSelect={api.selectPlatform}
+            />
+          </div>
+
+          <div
+            className="panel__preview"
+            id={PANEL_ID}
+            role={focused ? 'region' : 'tabpanel'}
+            aria-labelledby={focused ? 'focused-platform-name' : platformTabId(state.platform)}
+          >
+            <PreviewPanel
+              renderActions={(editAction, focusAction, editing) => (
+                <CopyActions
+                  editAction={editAction}
+                  focusAction={focusAction}
+                  templateAction={showTemplates ? (
+                    <WechatTemplatePicker
+                      key={platform.id}
+                      platform={platform}
+                      selected={activeTemplate}
+                      blocked={editing ? '先点「完成编辑」，再切换模板。' : selectTemplateEditConflict(state)}
+                      onSelect={api.selectTemplate}
+                    />
+                  ) : null}
+                  focused={focused}
+                  platform={platform}
+                  copyBlockReason={api.copyBlockReason}
+                  titleBlockReason={api.titleBlockReason}
+                  copyNotice={state.copyNotice}
+                  manualCopy={state.manualCopy}
+                  onCopyTitle={() => {
+                    void api.copy('title', previewWarnings, focused)
+                  }}
+                  onCopyBody={() => {
+                    void api.copy('body', previewWarnings, focused)
+                  }}
+                  onDismissManual={api.dismissManualCopy}
+                />
+              )}
+              publishReview={(
+                <PublishReview
+                  key={platform.id}
+                  platform={platform}
+                  status={api.status}
+                  result={api.publishReview}
+                  failed={api.failure !== null || state.typesetFailure !== null}
+                />
+              )}
+              compatibility={api.document ? { expanded: state.warningsExpanded, onToggle: api.toggleWarnings } : undefined}
+              compatibilityWarnings={warnings}
+              onLocateSource={locateSource}
+              platform={platform}
+              template={activeTemplate}
+              status={api.status}
+              document={api.document}
+              failure={api.failure}
+              report={state.report}
+              generation={state.generation}
+              sourceRevision={state.revision}
+              parseErrorMessage={api.parseErrorMessage}
+              typesetFailureReason={state.typesetFailure?.reason ?? null}
+              onImageError={reportImageError}
+              onBodyEdit={api.editBody}
+              bodyEdited={Boolean(state.bodyEdits[platform.id])}
+              bodySync={api.bodySync}
+              focused={focused}
+              onFocusChange={changeFocus}
+              availablePlatformNames={api.succeededPlatforms.map((id) =>
+                platformName(api, id),
+              )}
+            />
+          </div>
+        </section>
+      </main>
+    </div>
+  )
+}

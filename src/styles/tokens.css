@@ -1,0 +1,91 @@
+/* 多平台 Markdown 排版工作台 · 设计令牌
+ * 暖纸底 + 墨蓝强调；语义名优先，组件只引用语义令牌。 */
+
+:root {
+  /* 表面 */
+  --bg: #f5f4ed;
+  --surface: #faf9f5;
+  --surface-sunken: #eeece2;
+  --surface-warm: #e8e6dc;
+  --surface-code: #f3f1e8;
+
+  /* 前景 */
+  --fg: #141413;
+  --fg-2: #3d3d3a;
+  --muted: #504e49;
+  --meta: #6b6a64;
+
+  /* 描边 */
+  --border: #e0ded2;
+  --border-strong: #8b8879;
+
+  /* 强调 */
+  --accent: #1b365d;
+  --accent-strong: #142a48;
+  --accent-soft: #e4ecf5;
+  --accent-on: #faf9f5;
+
+  /* 语义状态 */
+  --success: #4a6b3a;
+  --success-soft: #e8eee2;
+  --warn: #7a5c14;
+  --warn-soft: #f6efdc;
+  --danger: #8a3a30;
+  --danger-soft: #f6e6e2;
+
+  /* 字体 */
+  --font-ui: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Source Han Sans SC", "Noto Sans CJK SC", system-ui, -apple-system, sans-serif;
+  --font-serif: "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC",
+    "STSong", Georgia, serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, "TsangerJinKai02",
+    "Source Han Serif SC", monospace;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
+
+  --leading-tight: 1.25;
+  --leading-ui: 1.4;
+  --leading-body: 1.55;
+
+  /* 间距（4px 基数） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* 圆角 */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* 深度：只有两级 */
+  --elev-ring: 0 0 0 1px var(--border);
+  --elev-ring-accent: 0 0 0 1px var(--accent);
+  --elev-raised: 0 4px 24px rgba(20, 20, 19, 0.06);
+
+  /* 焦点 */
+  --focus-ring: 0 0 0 2px var(--accent-strong);
+  --focus-offset: 2px;
+
+  /* 动效 */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* 布局 */
+  --topbar-height: 56px;
+  --source-min-width: 380px;
+  --preview-min-width: 520px;
+  --wechat-canvas-width: 677px;
+}
