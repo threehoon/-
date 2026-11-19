@@ -167,8 +167,11 @@ export async function verifyPublishLinks({ browser, target, out }) {
         await page.getByRole('button', { name: '退出专注', exact: true }).click()
         assert(await publish.isVisible())
         assert(!(await linksNav.isVisible()))
-        await source.fill(`${DRAFT}\n\n更新后正文。`)
-        await page.locator('.status-chip[data-state="stale"]').waitFor()
+        const prompt = page.waitForEvent('dialog')
+        const update = page.locator('.panel--source input[accept^=".md,"]').setInputFiles({ name: '新稿.md', mimeType: 'text/markdown', buffer: Buffer.from(DRAFT) })
+        await (await prompt).accept()
+        await update
+        await page.locator('.status-chip[data-state="ready"]').waitFor()
         await publish.click()
         await linksNav.waitFor()
       } else {

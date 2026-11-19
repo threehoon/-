@@ -2,7 +2,6 @@ import { readSourceMarker } from '@/core/render/source-markers'
 import type { PublishFinding } from '@/core/publish-review/review'
 import { collectBodyUnits, type BodyTextUnit } from '@/core/publish-review/units'
 import type { CompatibilityLocation, SourceSpan } from '@/core/types'
-import { relocateSourceSpan } from './source-rebase'
 import { located, outcomeRange, sameBlockAfterEdit, unavailable, type LocateOutcome } from './locate-shared'
 
 export type { LocateOutcome } from './locate-shared'
@@ -134,21 +133,28 @@ function wholeBlock(unit: BodyTextUnit): Range | null {
   return range.collapsed ? null : range
 }
 
-/**
- * 把一条预检提示映射回屏幕上的正文。三种结果：
- * 命中原文（located）；命中片段被改但仍是同一段（block，只落整块）；
- * 找不到（unavailable，界面据此给出明确反馈）。只含图片链接的块仍退回整块。
- */
+export function articleTitleElement(canvas: Element): Element | null {
+  return canvas.querySelector('#platform-article-title, .article-title')
+}
+
+export function selectTitleInput(input: HTMLInputElement, start: number, end: number) {
+  input.scrollIntoView?.({ block: 'center' })
+  input.focus({ preventScroll: true })
+  const offset = input.value.length - input.value.trimStart().length
+  input.setSelectionRange(offset + start, offset + end)
+}
+
 export function publishFindingElement(canvas: Element, finding: PublishFinding): Element | null {
-  if (finding.unit < 0) return canvas.querySelector('.article-title')
+  if (finding.unit < 0) return articleTitleElement(canvas)
   const article = canvas.querySelector('#platform-article')
   return article ? collectBodyUnits(article)[finding.unit]?.element ?? null : null
 }
 
+/** 把预检提示映射到原字句、仍是同一段的整块，或给出无法定位的原因。 */
 export function publishTargetOutcome(canvas: Element, finding: PublishFinding, previousElement?: Element | null): LocateOutcome {
   if (finding.unit < 0) {
-    const title = canvas.querySelector('.article-title')
-    if (!title || (previousElement !== undefined && title !== previousElement)) return unavailable('这一版成稿里没有可确认的原标题。')
+    const title = articleTitleElement(canvas)
+    if (!title) return unavailable('这一版成稿里没有可确认的原标题。')
     const text = title.textContent ?? ''
     if (text !== finding.context) return unavailable('标题的文字已经改过，这条提示不再对应得上。')
     const start = text.slice(finding.start, finding.end) === finding.original
@@ -208,6 +214,15 @@ export interface PublishLocate {
 export function locatePublishFinding(canvas: Element, finding: PublishFinding, previousElement?: Element | null): PublishLocate {
   let outcome: LocateOutcome
   try {
+    const title = finding.unit < 0 ? articleTitleElement(canvas) : null
+    if (title instanceof HTMLInputElement) {
+      const raw = title.value
+      const text = raw.trim()
+      if (text === finding.context && text.slice(finding.start, finding.end) === finding.original) {
+        selectTitleInput(title, finding.start, finding.end)
+        return { status: 'located', message: null }
+      }
+    }
     outcome = publishTargetOutcome(canvas, finding, previousElement)
   } catch {
     // 定位失败不该把异常抛到 React 事件里，交给界面说明原因。
@@ -249,5 +264,5 @@ export function currentSourceSpan(location: CompatibilityLocation, baseline: str
   const { span } = location
   if (span.end > baseline.length || span.start >= span.end) return null
   if (baseline === current) return span
-  return relocateSourceSpan(baseline, current, span)
+  return null
 }

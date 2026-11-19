@@ -6,7 +6,7 @@ import { reviewPublishUnits, type PublishFinding, type PublishReviewResult } fro
 import { collectBodyUnits } from '@/core/publish-review/units'
 import type { PlatformDefinition } from '@/core/types'
 import type { StudioStatus } from '@/app/studio-state'
-import { locatePublishFinding, publishFindingElement } from './issue-locations'
+import { articleTitleElement, locatePublishFinding, publishFindingElement } from './issue-locations'
 
 interface PublishReviewProps {
   readonly platform: PlatformDefinition
@@ -112,7 +112,8 @@ export function PublishReview({ platform, status, result, failed }: PublishRevie
       setScan({ status: 'unavailable', findings: [], at: checkedAt(), signature })
       return
     }
-    const title = root.querySelector('.article-title')?.textContent?.trim() ?? ''
+    const field = articleTitleElement(root)
+    const title = (field instanceof HTMLInputElement ? field.value : field?.textContent)?.trim() ?? ''
     const outcome = reviewPublishUnits(platform.id, title === '' ? null : title, collectBodyUnits(article))
     setScan(outcome.status === 'reviewed'
       ? { status: 'reviewed', findings: outcome.findings, at: checkedAt(), signature }

@@ -9,8 +9,8 @@ import type {
   TypesetReport,
   WechatTemplateId,
 } from '@/core/types'
-import type { BodyPatch, StudioState, StudioStatus } from '@/app/studio-state'
-import { hasCopyableBody, type StudioApi } from '@/app/use-studio'
+import type { StudioStatus } from '@/app/studio-state'
+import type { StudioApi } from '@/app/use-studio'
 import { formatClock } from '@/app/text'
 import { Icon } from '@/components/Icon'
 import { EditableArticle, type ArticleLayout } from './EditableArticle'
@@ -35,11 +35,10 @@ export interface PreviewPanelProps {
   readonly sourceRevision?: number
   readonly onBodyEdit?: StudioApi['editBody']
   readonly contentBaseline?: StudioApi['contentBaseline']
-  readonly bodyPatch?: BodyPatch | null
+  readonly hasPlatformEdits?: boolean
+  readonly titleInput?: string
+  readonly onTitleEdit?: StudioApi['editTitle']
   readonly patchBlockReason?: string | null
-  readonly syncBlockReason?: string | null
-  readonly syncNotice?: StudioState['syncNotice']
-  readonly onSync?: () => void
   readonly onDiscard?: () => void
   readonly focused?: boolean
   readonly onFocusChange?: (enabled: boolean) => void
@@ -70,11 +69,10 @@ export function PreviewPanel({
   generation = 0,
   sourceRevision = 0,
   contentBaseline = null,
-  bodyPatch = null,
+  hasPlatformEdits = false,
+  titleInput = '',
+  onTitleEdit,
   patchBlockReason = null,
-  syncBlockReason = null,
-  syncNotice = null,
-  onSync,
   onDiscard,
   focused = false,
   onFocusChange,
@@ -88,7 +86,7 @@ export function PreviewPanel({
   const isStale = status === 'stale'
   const canvas = useRef<HTMLDivElement>(null)
   const [articleRevision, setArticleRevision] = useState(0)
-  const canCheck = status === 'typeset' && failure === null && typesetFailureReason === null && bodyPatch?.state !== 'superseded'
+  const canCheck = status === 'typeset' && failure === null && typesetFailureReason === null
 
   function locateCompatibility(warning: CompatWarning): LocateFeedback {
     const article = canvas.current?.querySelector('#platform-article')
@@ -140,7 +138,7 @@ export function PreviewPanel({
             {isStale && report?.typesetAt ? (
               <p className="preview-banner" data-tone="quiet">
                 <Icon name="clock" />
-                源稿已更新 · 重新排版后可复制。当前显示的是 {formatClock(report.typesetAt)} 生成的上一版输出，复制保持禁用。
+                原稿配图已更新 · 重新排版后可复制。当前显示的是 {formatClock(report.typesetAt)} 生成的上一版输出，复制保持禁用。
               </p>
             ) : null}
             {status === 'typesetting' ? (
@@ -187,7 +185,7 @@ export function PreviewPanel({
                 </p>
                 <p className="preview-failure__reason">原因：{parseReason}</p>
                 <p className="preview-failure__next">
-                  下一步：检查是不是有未闭合的代码块或表格分隔行，修好后重新点「一键排版」。源稿本身不会被工具改写。
+                  下一步：检查是不是有未闭合的代码块或表格分隔行。修好原稿后重新导入，再点「一键排版」。
                 </p>
               </div>
             ) : null}
@@ -200,7 +198,7 @@ export function PreviewPanel({
                 </p>
                 <p className="preview-failure__reason">原因：{typesetFailureReason}</p>
                 <p className="preview-failure__next">
-                  下一步：再点一次「一键排版」；如果仍失败，缩短源稿或先移除最近的改动再试。
+                  下一步：再点一次「一键排版」；如果仍失败，可修正原稿后重新导入再试。
                 </p>
               </div>
             ) : null}
@@ -232,13 +230,25 @@ export function PreviewPanel({
                 data-dimmed={status === 'typesetting' ? 'true' : 'false'}
               >
                 <ArticleCheck
-                  key={`${generation}:${sourceRevision}:${articleRevision}:${platform.id}:${template}:${canCheck}`}
+                  key={`${generation}:${sourceRevision}:${articleRevision}:${titleInput}:${platform.id}:${template}:${canCheck}`}
                   enabled={canCheck}
                   baseline={contentBaseline}
                   inEditor={Boolean(editing)}
                   warnings={canCheck ? compatibilityWarnings : NO_WARNINGS}
                 />
-                {document.title === null ? null : (
+                {editing && onTitleEdit ? (
+                  <div className="field article-title-field">
+                    <label className="field__label" htmlFor="platform-article-title">当前平台标题</label>
+                    <input
+                      className="field__input"
+                      id="platform-article-title"
+                      type="text"
+                      value={titleInput}
+                      onChange={(event) => onTitleEdit(event.currentTarget.value)}
+                      placeholder="填写当前平台的标题（可留空）"
+                    />
+                  </div>
+                ) : document.title === null ? null : (
                   <h2 className="article-title" style={{ fontFamily: DEFAULT_ARTICLE_FONT }}>{document.title}</h2>
                 )}
                 {article}
@@ -268,8 +278,7 @@ export function PreviewPanel({
 
   if (!document) return renderLayout({})
 
-  const original = report?.results.find((result) => result.platform === platform.id)?.outcome
-  const canEdit = status === 'typeset' && failure === null && patchBlockReason === null && (bodyPatch?.state === 'linked' || hasCopyableBody(original?.ok ? original.document : document))
+  const canEdit = status === 'typeset' && failure === null && patchBlockReason === null
   return (
     <EditableArticle
       key={`${platform.id}-${generation}`}
@@ -279,10 +288,7 @@ export function PreviewPanel({
         setArticleRevision((previous) => previous + 1)
       } : undefined}
       onImageError={onImageError}
-      patch={bodyPatch}
-      syncBlockReason={syncBlockReason}
-      syncNotice={syncNotice}
-      onSync={onSync}
+      hasPlatformEdits={hasPlatformEdits}
       onDiscard={status === 'typesetting' ? undefined : onDiscard}
       focused={focused}
       onFocusChange={onFocusChange}

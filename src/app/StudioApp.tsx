@@ -32,7 +32,7 @@ function statusLabel(api: StudioApi): string {
       return typesetAt === null ? '已排版' : `已排版 · ${formatClock(typesetAt)}`
     }
     case 'stale': {
-      return '源稿已修改 · 需重新排版'
+      return '原稿配图已更新 · 需重新排版'
     }
     case 'parse-error': {
       return '源稿无法解析'
@@ -114,10 +114,10 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
   const warnings = [...api.warnings, ...previewWarnings].filter(({ severity }) => !focused || severity === 'blocker')
   const activeTemplate = selectActiveTemplate(state)
   const showTemplates = !focused && api.document !== null &&
-    (api.copyBlockReason === null || (api.status === 'typeset' && api.failure === null && api.bodyPatch?.state === 'superseded')) && state.typesetFailure === null
+    api.copyBlockReason === null && state.typesetFailure === null
 
   function locateSource(location: CompatibilityLocation): boolean {
-    const baselineMarkdown = api.bodyPatch?.mapping.markdown ?? state.typesetBaselines[platform.id]?.markdown
+    const baselineMarkdown = state.typesetBaselines[platform.id]?.markdown
     if (baselineMarkdown === undefined) return false
     const span = currentSourceSpan(location, baselineMarkdown, state.markdown)
     const field = document.querySelector<HTMLTextAreaElement>('#source-markdown')
@@ -156,7 +156,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
   return (
     <div className="studio">
       <a className="skip-link" href="#source-markdown" hidden={focused}>
-        跳到源稿编辑区
+        跳到 Markdown 原稿区
       </a>
 
       <header className="topbar" hidden={focused}>
@@ -204,6 +204,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
         <div className="workspace__source" id="workspace-source" hidden={focused}>
           <SourcePanel
             markdown={state.markdown}
+            sourceLocked={state.sourceLocked}
             onMarkdownChange={api.setMarkdown}
             onImport={(files) => {
               void api.importFiles(files)
@@ -213,8 +214,6 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
             status={api.status}
             stats={api.stats}
             parseErrorMessage={api.parseErrorMessage}
-            titleOverride={state.titleOverride}
-            onTitleChange={api.setTitle}
             titleCandidate={api.titleCandidate}
             remoteImages={api.remoteImages}
             localImages={api.imageSources.filter((raw) => !api.remoteImages.includes(raw))}
@@ -274,7 +273,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
               )}
               publishReview={(
                 <PublishReview
-                  key={platform.id}
+                  key={`${platform.id}:${state.generation}`}
                   platform={platform}
                   status={api.status}
                   result={api.publishReview}
@@ -297,11 +296,10 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
               onImageError={reportImageError}
               onBodyEdit={api.editBody}
               contentBaseline={api.contentBaseline}
-              bodyPatch={api.bodyPatch}
+              hasPlatformEdits={api.hasPlatformEdits}
+              titleInput={api.titleInput}
+              onTitleEdit={api.editTitle}
               patchBlockReason={api.patchBlockReason}
-              syncBlockReason={api.syncBlockReason}
-              syncNotice={state.syncNotice?.platform === platform.id ? state.syncNotice : null}
-              onSync={api.syncToSource}
               onDiscard={api.discardPatch}
               focused={focused}
               onFocusChange={changeFocus}

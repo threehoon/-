@@ -15,7 +15,6 @@ import {
   selectCopyBlockReason,
   selectPlatformResult,
   selectPatchBlockReason,
-  selectSyncBlockReason,
   selectTemplateEditConflict,
   selectStatus,
   selectSucceededPlatforms,
@@ -147,20 +146,10 @@ describe('工作台状态机 · 排版中与成功', () => {
 })
 
 describe('工作台状态机 · 输出过期', () => {
-  it('排版后改源稿即过期，复制被禁用并说明原因', () => {
-    const state = runEvents(
-      [{ type: 'source/changed', markdown: '# 一篇中文样稿\n\n正文段落，追加一句。' }],
-      typedState(),
-    )
-    expect(selectStatus(state)).toBe('stale')
-    expect(isStale(state)).toBe(true)
-    expect(selectCopyBlockReason(state)).toContain('重新排版')
-    expect(selectActiveDocument(state)?.plainText).toBe('正文段落')
-  })
-
-  it('改标题也会让输出过期', () => {
-    const state = runEvents([{ type: 'title/changed', value: '我手填的标题' }], typedState())
-    expect(selectStatus(state)).toBe('stale')
+  it('成功排版后锁定粘贴的原稿，不接受原稿区改动', () => {
+    const before = typedState()
+    expect(before.sourceLocked).toBe(true)
+    expect(studioReducer(before, { type: 'source/changed', markdown: '不应改动' })).toBe(before)
   })
 
   it('本地图片配对变化后同样要求重新排版', () => {
@@ -175,7 +164,7 @@ describe('工作台状态机 · 输出过期', () => {
 
   it('重新排版后恢复为可复制', () => {
     const stale = runEvents(
-      [{ type: 'source/changed', markdown: '# 一篇中文样稿\n\n改过的正文' }],
+      [{ type: 'assets/bound', raw: 'cover.png', url: 'blob:cover' }],
       typedState(),
     )
     const refreshed = runEvents(
@@ -201,37 +190,32 @@ describe('工作台状态机 · 输出过期', () => {
 })
 
 describe('工作台状态机 · 平台隔离', () => {
-  function bodyEdit(state: StudioState, platformStyle = false): StudioEvent {
-    const baseline = state.typesetBaselines[state.platform]
-    if (!state.report || !baseline) throw new Error('测试需要先排版')
+  function bodyEdit(state: StudioState): StudioEvent {
+    if (!state.report) throw new Error('测试需要先排版')
     return {
-      type: 'body/edited', report: state.report, platform: state.platform, revision: state.revision,
-      patch: {
-        html: '<p>右侧改过</p>', plainText: '右侧改过', state: 'diverged', reason: null, platformStyle,
-        base: baseline, mapping: { html: '<p>正文段落</p>', markdown: baseline.markdown, warnings: [] },
-        syncedHtml: '<p>正文段落</p>', syncedMarkdown: baseline.markdown, assets: {},
-      },
+      type: 'body/edited', report: state.report, platform: state.platform, revision: state.revision, generation: state.generation,
+      patch: { html: '<p>右侧改过</p>', plainText: '右侧改过', baseline: { html: '<p>正文段落</p>', warnings: [] } },
     }
   }
 
-  it('编辑不改源稿或 revision，不影响其它平台，并仅拦有手动样式的换版', () => {
+  it('标题和正文只改当前平台，不改变源稿、不触发其它平台过期', () => {
     const before = typedState()
-    const next = studioReducer(before, bodyEdit(before))
+    const next = runEvents([
+      bodyEdit(before),
+      { type: 'title/edited', platform: 'wechat', generation: before.generation, value: '公众号新标题' },
+    ], before)
     expect(next.markdown).toBe(before.markdown)
     expect(next.revision).toBe(before.revision)
-    expect(selectActiveDocument(next)?.plainText).toBe('右侧改过')
+    expect(selectActiveDocument(next)).toMatchObject({ title: '公众号新标题', plainText: '右侧改过' })
     expect(selectCopyBlockReason(next)).toBeNull()
-    expect(selectSyncBlockReason(next)).toBeNull()
-    expect(selectTemplateEditConflict(next)).toBeNull()
-    expect(selectTemplateEditConflict(studioReducer(before, bodyEdit(before, true)))).toContain('手动样式')
-    expect(next.bodyPatches.wechat?.state).toBe('diverged')
+    expect(selectTemplateEditConflict(next)).toContain('手动正文改动')
     const switched = studioReducer(next, { type: 'platform/changed', platform: 'toutiao' })
     expect(selectCopyBlockReason(switched)).toBeNull()
-    expect(selectActiveDocument(switched)?.plainText).toBe('正文段落')
+    expect(selectActiveDocument(switched)).toMatchObject({ title: null, plainText: '正文段落' })
   })
 
   it.each<StudioEvent>([
-    { type: 'source/changed', markdown: '左侧较新稿' },
+    { type: 'assets/bound', raw: 'cover.png', url: 'blob:cover' },
     { type: 'import/succeeded', markdown: '另一个文件', fileName: '新稿.md' },
     { type: 'platform/changed', platform: 'toutiao' },
     { type: 'typeset/started' },
@@ -239,65 +223,29 @@ describe('工作台状态机 · 平台隔离', () => {
     const before = typedState()
     const after = studioReducer(before, intervening)
     expect(studioReducer(after, bodyEdit(before))).toBe(after)
+    expect(studioReducer(after, { type: 'title/edited', platform: 'wechat', generation: before.generation, value: '迟到的标题' })).toBe(after)
   })
 
-  it('同基线重排保留补丁；改变基线后仍可查看，必须撤销才能使用新成稿', () => {
-    const before = typedState()
-    const dirty = studioReducer(before, bodyEdit(before))
-    const rerender = (state: StudioState) => runEvents([
-      { type: 'typeset/started' }, { type: 'typeset/succeeded', report: okReport() },
-    ], state)
-    expect(rerender(dirty).bodyPatches.wechat?.state).toBe('diverged')
-    const stale = studioReducer(dirty, { type: 'title/changed', value: '新标题' })
-    expect(stale.bodyPatches.wechat?.state).toBe('superseded')
-    const refreshed = rerender(stale)
-    expect(selectActiveDocument(refreshed)?.plainText).toBe('右侧改过')
-    expect(selectPatchBlockReason(refreshed)).toContain('基线已变')
-    expect(selectSyncBlockReason(refreshed)).toContain('基线已变')
-    const reverted = studioReducer(refreshed, { type: 'patch/discarded', platform: 'wechat' })
-    expect(selectActiveDocument(reverted)?.plainText).toBe('正文段落')
-    expect(selectPatchBlockReason(reverted)).toBeNull()
-  })
-
-  it('恢复相同源稿后重排可重新绑定原平台补丁', () => {
-    const before = typedState()
-    const dirty = studioReducer(before, bodyEdit(before))
+  it('重新排版保留平台正文；撤销只恢复当前平台的稿件', () => {
+    const wechat = typedState()
+    const toutiao = runEvents([bodyEdit(wechat), { type: 'platform/changed', platform: 'toutiao' }], wechat)
+    const dirty = studioReducer(toutiao, bodyEdit(toutiao))
     const refreshed = runEvents([
-      { type: 'source/changed', markdown: '另外的草稿' },
-      { type: 'source/changed', markdown: before.markdown },
+      { type: 'assets/bound', raw: 'cover.png', url: 'blob:cover' },
       { type: 'typeset/started' }, { type: 'typeset/succeeded', report: okReport() },
     ], dirty)
-    expect(refreshed.bodyPatches.wechat?.state).toBe('diverged')
-    expect(refreshed.bodyPatches.wechat?.base.revision).toBe(refreshed.revision)
+    expect(selectActiveDocument(refreshed)?.plainText).toBe('右侧改过')
+    expect(selectPatchBlockReason(refreshed)).toBeNull()
+    const reverted = studioReducer(refreshed, { type: 'patch/discarded', platform: 'toutiao' })
+    expect(selectActiveDocument(reverted)?.plainText).toBe('正文段落')
+    expect(reverted.bodyPatches.wechat).toBe(refreshed.bodyPatches.wechat)
+    expect(reverted.markdown).toBe(dirty.markdown)
+    expect(studioReducer(reverted, bodyEdit(refreshed))).toBe(reverted)
   })
 
-  it('只有显式同步推进共享基线，当前平台关联，已有的其它补丁保留为过期', () => {
+  it('失败重排不丢掉上一版的独立成稿，也不改变源稿', () => {
     const before = typedState()
-    const switched = studioReducer(before, { type: 'platform/changed', platform: 'toutiao' })
-    const edited = studioReducer(switched, bodyEdit(switched))
-    const current = studioReducer(edited, { type: 'platform/changed', platform: 'wechat' })
-    const dirty = studioReducer(current, bodyEdit(current))
-    const patch = dirty.bodyPatches.wechat
-    if (!patch) throw new Error('缺少补丁')
-    const markdown = before.markdown.replace('正文段落。', '右侧改过')
-    const next = studioReducer(dirty, {
-      type: 'sync/to-source', platform: 'wechat', markdown, projectedMarkdown: markdown, assets: {}, patch,
-      document: makeDocument('wechat', { html: patch.html, plainText: patch.plainText }),
-    })
-    expect(next.markdown).toBe(markdown)
-    expect(next.revision).toBe(before.revision + 1)
-    expect(next.typesetBaselines.wechat?.markdown).toBe(markdown)
-    expect(next.bodyPatches.wechat?.state).toBe('linked')
-    expect(next.bodyPatches.toutiao?.state).toBe('superseded')
-    expect(isStale(next)).toBe(false)
-    const stale = studioReducer(next, { type: 'platform/changed', platform: 'toutiao' })
-    expect(isStale(stale)).toBe(true)
-    expect(selectCopyBlockReason(stale)).toContain('重新排版')
-  })
-
-  it('失败重排不丢掉上一版的未同步成稿，也不改变源稿', () => {
-    const before = typedState()
-    const dirty = studioReducer(before, bodyEdit(before, true))
+    const dirty = studioReducer(before, bodyEdit(before))
     const failed = runEvents([
       { type: 'typeset/started' },
       { type: 'typeset/succeeded', report: makeReport([], { typesetAt: null, parseError: '无法重新解析' }) },
@@ -308,20 +256,20 @@ describe('工作台状态机 · 平台隔离', () => {
     expect(failed.typesetFailure?.reason).toBe('无法重新解析')
     expect(selectActiveDocument(failed)?.plainText).toBe('右侧改过')
     expect(selectCopyBlockReason(failed)).toBeNull()
-    expect(selectSyncBlockReason(failed)).toContain('排版失败')
+    expect(selectPatchBlockReason(failed)).toContain('排版失败')
   })
 
-  it('在排版开始后修改左侧时不安装根据旧稿生成的结果', () => {
-    const before = typedState()
+  it('在首次排版时继续粘贴不会安装根据旧稿生成的结果', () => {
     const next = runEvents([
+      { type: 'source/changed', markdown: '原来的源稿' },
       { type: 'typeset/started' },
       { type: 'source/changed', markdown: '左侧刚提交的源稿' },
       { type: 'typeset/succeeded', report: okReport() },
-    ], before)
-    expect(next.report).toBe(before.report)
+    ])
+    expect(next.report).toBeNull()
     expect(next.typesetting).toBe(false)
     expect(next.markdown).toBe('左侧刚提交的源稿')
-    expect(selectStatus(next)).toBe('stale')
+    expect(selectStatus(next)).toBe('ready')
   })
 })
 
@@ -431,22 +379,26 @@ describe('工作台状态机 · 导入', () => {
       { type: 'import/succeeded', markdown: '# 新稿\n\n新正文', fileName: '新稿.md' },
     ])
     expect(state.markdown).toBe('# 新稿\n\n新正文')
+    expect(state.sourceLocked).toBe(true)
+    expect(studioReducer(state, { type: 'source/changed', markdown: '拒绝覆盖' })).toBe(state)
     expect(state.importNotice?.tone).toBe('success')
     expect(state.importNotice?.message).toContain('新稿.md')
   })
 
   it('导入新稿不复用上篇稿件的手填标题与同路径图片', () => {
+    const typed = typedState()
     const before = runEvents([
-      { type: 'title/changed', value: '旧稿手填标题' },
+      { type: 'title/edited', platform: 'wechat', generation: typed.generation, value: '旧稿手填标题' },
       { type: 'assets/bound', raw: 'images/cover.png', url: 'blob:old' },
-    ], typedState())
+    ], typed)
     const state = runEvents([
       { type: 'import/succeeded', markdown: '# 新稿\n\n![新封面](images/cover.png)', fileName: '新稿.md' },
     ], before)
-    expect(state.titleOverride).toBe('')
+    expect(state.titleOverrides).toEqual({})
     expect(state.boundAssets).toEqual({})
     expect(state.assetNotice).toBeNull()
-    expect(selectStatus(state)).toBe('stale')
+    expect(selectStatus(state)).toBe('ready')
+    expect(selectActiveDocument(state)).toBeNull()
   })
 
   it('导入失败不覆盖当前稿', () => {

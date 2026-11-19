@@ -1723,10 +1723,9 @@ code {
   content: '';
 }
 
-/* Keep the masthead compact when the canvas is used as an editor. */
-.preview-canvas[data-article-template='classic'][data-editing='true'] > .article-title {
-  margin-bottom: var(--space-5);
-  padding-bottom: var(--space-2);
+/* Keep the title field outside the body editor's offset focus outline. */
+.article-title-field {
+  margin-block-end: var(--space-3);
 }
 
 /* The editing canvas can expand without changing the exported reading measure. */

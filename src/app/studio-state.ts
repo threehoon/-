@@ -5,7 +5,6 @@ import type {
   TypesetReport,
   WechatTemplateId,
 } from '@/core/types'
-import { fingerprint } from '@/core/hash'
 import { DEFAULT_WECHAT_TEMPLATE_ID } from '@/platforms/wechat/theme'
 
 /**
@@ -58,40 +57,20 @@ export interface TypesetFailure {
 export interface TypesetBaseline {
   readonly revision: number
   readonly markdown: string
-  readonly template: WechatTemplateId
-  readonly fingerprint: string
 }
-
-export type PatchState = 'linked' | 'diverged' | 'superseded'
 
 export interface BodyPatch {
   readonly html: string
   readonly plainText: string
-  readonly state: PatchState
-  readonly platformStyle: boolean
-  readonly base: Pick<TypesetBaseline, 'revision' | 'fingerprint'>
-  readonly reason: string | null
-  readonly supersededFrom?: Exclude<PatchState, 'superseded'>
-  /** HTML 源码标记仍使用最初那次排版的字节偏移；同步不重写正在编辑的 DOM。 */
-  readonly mapping: { readonly html: string; readonly markdown: string; readonly warnings: RenderedDocument['warnings'] }
-  readonly syncedHtml: string
-  readonly syncedMarkdown: string
-  readonly assets: Readonly<Record<string, string>>
+  readonly baseline: Pick<RenderedDocument, 'html' | 'warnings'>
 }
-
-interface SyncNotice {
-  readonly platform: PlatformId
-  readonly tone: 'success' | 'failure'
-  readonly message: string
-}
-
-const SUPERSEDED = '排版基线已变。右侧改动仍可查看；撤销右侧改动后使用最新成稿。'
 
 export interface StudioState {
   readonly markdown: string
-  readonly titleOverride: string
+  readonly sourceLocked: boolean
+  readonly titleOverrides: Readonly<Partial<Record<PlatformId, string>>>
   readonly platform: PlatformId
-  /** 源稿、标题或图片配对的每次改动都会加一，用于判断输出是否过期。 */
+  /** 原稿或原稿图片配对的每次改动都会加一，用于判断输出是否过期。 */
   readonly revision: number
   /** 点击「一键排版」时锁定的 revision，防止迟到的结果覆盖新源稿。 */
   readonly pendingRevision: number | null
@@ -109,31 +88,21 @@ export interface StudioState {
   readonly assetNotice: AssetNotice | null
   readonly warningsExpanded: boolean
   readonly bodyPatches: Readonly<Partial<Record<PlatformId, BodyPatch>>>
-  readonly syncNotice: SyncNotice | null
   readonly boundAssets: Readonly<Record<string, string>>
 }
 
 export type StudioEvent =
   | { readonly type: 'source/changed'; readonly markdown: string }
-  | { readonly type: 'title/changed'; readonly value: string }
+  | { readonly type: 'title/edited'; readonly platform: PlatformId; readonly generation: number; readonly value: string }
   | { readonly type: 'platform/changed'; readonly platform: PlatformId }
   | {
       readonly type: 'body/edited'
       readonly platform: PlatformId
       readonly report: TypesetReport
       readonly revision: number
+      readonly generation: number
       readonly patch: BodyPatch
     }
-  | {
-      readonly type: 'sync/to-source'
-      readonly platform: PlatformId
-      readonly patch: BodyPatch
-      readonly markdown: string
-      readonly projectedMarkdown: string
-      readonly document: RenderedDocument | null
-      readonly assets: Readonly<Record<string, string>>
-    }
-  | { readonly type: 'sync/rejected'; readonly platform: PlatformId; readonly patch: BodyPatch; readonly reason: string }
   | { readonly type: 'patch/discarded'; readonly platform: PlatformId }
   | {
       readonly type: 'template/applied'
@@ -177,14 +146,14 @@ export type StudioEvent =
 
 export interface StudioInit {
   readonly markdown?: string
-  readonly titleOverride?: string
   readonly platform: PlatformId
 }
 
 export function createInitialState(init: StudioInit): StudioState {
   return {
     markdown: init.markdown ?? '',
-    titleOverride: init.titleOverride ?? '',
+    sourceLocked: false,
+    titleOverrides: {},
     platform: init.platform,
     revision: 0,
     pendingRevision: null,
@@ -201,66 +170,33 @@ export function createInitialState(init: StudioInit): StudioState {
     assetNotice: null,
     warningsExpanded: true,
     bodyPatches: {},
-    syncNotice: null,
     boundAssets: {},
   }
 }
 
-function baselineFor(state: StudioState, platform: PlatformId): TypesetBaseline {
-  const { revision, markdown, titleOverride, boundAssets } = state
-  const template = state.platformTemplates[platform] ?? DEFAULT_WECHAT_TEMPLATE_ID
-  const assets = Object.keys(boundAssets).sort().flatMap((path) => [path, boundAssets[path]])
-  return { revision, markdown, template, fingerprint: fingerprint([markdown, titleOverride.trim(), template, ...assets]) }
-}
-
-function supersede(patch: BodyPatch): BodyPatch {
-  return patch.state === 'superseded' ? patch : {
-    ...patch, state: 'superseded', supersededFrom: patch.state, reason: SUPERSEDED,
-  }
-}
-
-function rebind(patch: BodyPatch, baseline: TypesetBaseline): BodyPatch {
-  if (patch.base.fingerprint !== baseline.fingerprint) return supersede(patch)
-  return {
-    ...patch,
-    base: { revision: baseline.revision, fingerprint: baseline.fingerprint },
-    state: patch.supersededFrom ?? patch.state,
-    supersededFrom: undefined,
-    reason: patch.state === 'superseded' ? null : patch.reason,
-  }
-}
-
-/** 源稿、标题、图片配对的改动共用这一条通路。 */
-function withContentChange(state: StudioState, patch: Partial<StudioState>): StudioState {
-  const bodyPatches = { ...state.bodyPatches }
-  for (const platform of Object.keys(bodyPatches) as PlatformId[]) {
-    const body = bodyPatches[platform]
-    if (body) bodyPatches[platform] = supersede(body)
-  }
-  return {
-    ...state,
-    ...patch,
-    revision: state.revision + 1,
-    bodyPatches,
-    syncNotice: null,
-    manualCopy: null,
-    copyNotice: null,
-  }
+/** 左侧原稿输入及其配图是排版输入，右侧排版结果的编辑不走这里。 */
+function withSourceChange(state: StudioState, patch: Partial<StudioState>): StudioState {
+  return { ...state, ...patch, revision: state.revision + 1, manualCopy: null, copyNotice: null }
 }
 
 export function studioReducer(state: StudioState, event: StudioEvent): StudioState {
   switch (event.type) {
     case 'source/changed': {
-      if (event.markdown === state.markdown) {
+      if (state.sourceLocked || event.markdown === state.markdown) {
         return state
       }
-      return withContentChange(state, { markdown: event.markdown })
+      return withSourceChange(state, { markdown: event.markdown })
     }
-    case 'title/changed': {
-      if (event.value === state.titleOverride) {
-        return state
-      }
-      return withContentChange(state, { titleOverride: event.value })
+    case 'title/edited': {
+      const { platform, generation, value } = event
+      const baseline = selectPlatformResult(state, platform)?.outcome
+      if (state.platform !== platform || state.generation !== generation || selectPatchBlockReason(state) !== null || !baseline?.ok) return state
+      const initial = baseline.document.title ?? ''
+      if (value === (state.titleOverrides[platform] ?? initial)) return state
+      const titleOverrides = { ...state.titleOverrides }
+      if (value === initial) delete titleOverrides[platform]
+      else titleOverrides[platform] = value
+      return { ...state, titleOverrides, copyNotice: null, manualCopy: null }
     }
     case 'platform/changed': {
       if (event.platform === state.platform) {
@@ -270,61 +206,26 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
       return { ...state, platform: event.platform, copyNotice: null, manualCopy: null }
     }
     case 'body/edited': {
-      const { platform, report, revision, patch } = event
-      if (state.platform !== platform || state.report !== report || state.revision !== revision || selectPatchBlockReason(state)) return state
-      const baseline = state.typesetBaselines[platform]
+      const { platform, report, revision, generation, patch } = event
+      if (state.platform !== platform || state.report !== report || state.revision !== revision ||
+        state.generation !== generation || selectPatchBlockReason(state) !== null) return state
       const result = selectPlatformResult(state, platform)
-      if (!result?.outcome.ok || !baseline || patch.base.fingerprint !== baseline.fingerprint || patch.base.revision !== baseline.revision) return state
+      if (!result?.outcome.ok) return state
       const previous = state.bodyPatches[platform] ?? result.outcome.document
       if (previous.html === patch.html) return state
       const bodyPatches = { ...state.bodyPatches }
-      if (result.outcome.document.html === patch.html && patch.state === 'linked' && !patch.platformStyle) delete bodyPatches[platform]
+      if (result.outcome.document.html === patch.html) delete bodyPatches[platform]
       else bodyPatches[platform] = patch
-      return { ...state, bodyPatches, syncNotice: null, copyNotice: null, manualCopy: null }
-    }
-    case 'sync/to-source': {
-      const { platform, patch, markdown } = event
-      if (state.platform !== platform || state.bodyPatches[platform] !== patch || selectSyncBlockReason(state)) return state
-      const changed = markdown !== state.markdown
-      const { report } = state
-      const document = event.document
-      if (!report || (changed && document?.platform !== platform)) return state
-      const next = changed ? withContentChange(state, { markdown, boundAssets: { ...state.boundAssets, ...event.assets } }) : state
-      const baseline = baselineFor(next, platform)
-      return {
-        ...next,
-        report: document ? {
-          ...report,
-          results: report.results.map((entry) => entry.platform === platform
-            ? { platform, outcome: { ok: true, document } } : entry),
-        } : report,
-        typesetBaselines: { ...next.typesetBaselines, [platform]: baseline },
-        bodyPatches: {
-          ...next.bodyPatches,
-          [platform]: {
-            ...patch, state: 'linked', reason: null, syncedHtml: patch.html, syncedMarkdown: event.projectedMarkdown,
-            base: { revision: baseline.revision, fingerprint: baseline.fingerprint },
-          },
-        },
-        syncNotice: {
-          platform, tone: 'success',
-          message: changed ? '正文已同步到 Markdown。其它平台的成稿已过期。' : '源稿文字没有变化；平台专属样式仍只保留在当前成稿。',
-        },
-      }
-    }
-    case 'sync/rejected': {
-      if (state.platform !== event.platform || state.bodyPatches[event.platform] !== event.patch) return state
-      return {
-        ...state,
-        bodyPatches: { ...state.bodyPatches, [event.platform]: { ...event.patch, reason: event.reason } },
-        syncNotice: { platform: event.platform, tone: 'failure', message: event.reason },
-      }
+      return { ...state, bodyPatches, copyNotice: null, manualCopy: null }
     }
     case 'patch/discarded': {
-      if (state.platform !== event.platform || state.typesetting || !state.bodyPatches[event.platform]) return state
+      const { platform } = event
+      if (state.platform !== platform || state.typesetting || !hasPlatformEdits(state)) return state
       const bodyPatches = { ...state.bodyPatches }
-      delete bodyPatches[event.platform]
-      return { ...state, bodyPatches, generation: state.generation + 1, syncNotice: null, copyNotice: null, manualCopy: null }
+      const titleOverrides = { ...state.titleOverrides }
+      delete bodyPatches[platform]
+      delete titleOverrides[platform]
+      return { ...state, bodyPatches, titleOverrides, generation: state.generation + 1, copyNotice: null, manualCopy: null }
     }
     case 'template/applied': {
       const { platform } = event
@@ -333,26 +234,15 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
         selectActiveTemplate(state) === event.template || state.typesetFailure || selectCopyBlockReason(state) !== null ||
         event.document.platform !== platform || !selectPlatformResult(state, platform)?.outcome.ok ||
         selectTemplateEditConflict(state)) return state
-      const next = {
+      return {
         ...state,
         platformTemplates: { ...state.platformTemplates, [platform]: event.template },
-      }
-      const baseline = baselineFor(next, platform)
-      const bodyPatches = { ...state.bodyPatches }
-      const patch = bodyPatches[platform]
-      if (patch?.state === 'linked') delete bodyPatches[platform]
-      else if (patch) bodyPatches[platform] = rebind(patch, baseline)
-      return {
-        ...next,
-        typesetBaselines: { ...state.typesetBaselines, [platform]: baseline },
         report: {
           ...report,
           results: report.results.map((entry) => entry.platform === platform
             ? { platform: entry.platform, outcome: { ok: true, document: event.document } }
             : entry),
         },
-        bodyPatches,
-        syncNotice: null,
         copyNotice: null,
         manualCopy: null,
       }
@@ -381,14 +271,10 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
       // Partial success replaces only completed outputs. Keep failed platforms' previous previews
       // and loss warnings, but fail their copy/edit gate against the new report.
       const retainedDocuments: Partial<Record<PlatformId, RenderedDocument>> = {}
-      const bodyPatches = { ...state.bodyPatches }
       const typesetBaselines = { ...state.typesetBaselines }
       for (const { platform, outcome } of report.results) {
         if (outcome.ok) {
-          const baseline = baselineFor(state, platform)
-          typesetBaselines[platform] = baseline
-          const patch = bodyPatches[platform]
-          if (patch) bodyPatches[platform] = rebind(patch, baseline)
+          typesetBaselines[platform] = { revision: state.revision, markdown: state.markdown }
         } else {
           const previous = selectBaseDocument(state, platform)
           if (previous) retainedDocuments[platform] = previous
@@ -399,11 +285,10 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
         typesetting: false,
         pendingRevision: null,
         report,
-        bodyPatches,
+        sourceLocked: state.sourceLocked || report.results.some(({ outcome }) => outcome.ok),
         retainedDocuments,
         typesetBaselines,
         generation: state.generation + 1,
-        syncNotice: null,
         manualCopy: null,
         copyNotice: null,
       }
@@ -463,10 +348,19 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
         }
       }
       return {
-        ...withContentChange(state, {
+        ...withSourceChange(state, {
           markdown: event.markdown,
-          titleOverride: '',
+          sourceLocked: true,
+          titleOverrides: {},
           boundAssets: {},
+          report: null,
+          bodyPatches: {},
+          typesetBaselines: {},
+          retainedDocuments: {},
+          generation: state.generation + 1,
+          pendingRevision: null,
+          typesetting: false,
+          typesetFailure: null,
           assetNotice: null,
         }),
         importNotice: {
@@ -488,12 +382,12 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
     }
     case 'assets/bound': {
       return {
-        ...withContentChange(state, {
+        ...withSourceChange(state, {
           boundAssets: { ...state.boundAssets, [event.raw]: event.url },
         }),
         assetNotice: {
           tone: 'success',
-          message: `已配对 ${event.raw}；重新排版后预览和复制内容里会替换成这张图。`,
+          message: `已配对 ${event.raw}；重新排版后，未手动编辑的正文将使用这张图。`,
         },
       }
     }
@@ -504,10 +398,10 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
       const boundAssets = { ...state.boundAssets }
       delete boundAssets[event.raw]
       return {
-        ...withContentChange(state, { boundAssets }),
+        ...withSourceChange(state, { boundAssets }),
         assetNotice: {
           tone: 'success',
-          message: `已取消 ${event.raw} 的配对；重新排版后会恢复为该位置的补插标记。`,
+          message: `已取消 ${event.raw} 的配对；重新排版后，未手动编辑的正文将恢复该位置的补插标记。`,
         },
       }
     }
@@ -530,9 +424,14 @@ export function selectActiveTemplate(state: StudioState): WechatTemplateId {
   return state.platformTemplates[state.platform] ?? DEFAULT_WECHAT_TEMPLATE_ID
 }
 
+export function hasPlatformEdits(state: StudioState): boolean {
+  return state.bodyPatches[state.platform] !== undefined || state.titleOverrides[state.platform] !== undefined
+}
+
 export function selectTemplateEditConflict(state: StudioState): string | null {
-  if (state.bodyPatches[state.platform]?.platformStyle) return '成稿有手动样式（如高亮或下划线）。请先撤销这些样式，再切换模板。'
-  return null
+  return state.bodyPatches[state.platform]
+    ? '当前成稿有手动正文改动。为保留文字和样式，暂不能换版；如需换版，可先另存成稿，再撤销当前平台的改动。'
+    : null
 }
 
 /** 空稿判定与「是否已排版」无关，只看源稿本身。 */
@@ -553,7 +452,7 @@ export function selectStatus(state: StudioState): StudioStatus {
   return isStale(state) ? 'stale' : 'typeset'
 }
 
-/** 输出过期：排版之后源稿、标题或图片配对又变了。 */
+/** 输出过期：排版之后原稿图片配对又变了。 */
 export function isStale(state: StudioState): boolean {
   if (!state.report || state.report.parseError !== null) {
     return false
@@ -590,24 +489,16 @@ export function selectCopyBlockReason(state: StudioState): string | null {
   if (result && !result.outcome.ok) {
     return '该平台本次排版失败，无法复制；切换到其它平台可继续，或按预览里的原因处理后重新排版。'
   }
-  const patch = state.bodyPatches[state.platform]
-  if (isStale(state) && patch?.state !== 'diverged') {
-    return '源稿已更新 · 重新排版后可复制。当前显示的是上一版成稿。'
+  if (!result?.outcome.ok) return '当前平台还没有成稿，请先排版。'
+  if (isStale(state)) {
+    return '源稿配图已更新 · 重新排版后可复制。当前显示的是上一版成稿。'
   }
-  if (patch?.state === 'superseded') return SUPERSEDED
   return null
 }
 
 export function selectPatchBlockReason(state: StudioState): string | null {
   if (state.typesetFailure) return '上次排版失败，请重新排版后编辑。'
-  if (isStale(state) && !state.typesetting) return '源稿已更新，请重新排版后编辑。'
   return selectCopyBlockReason(state)
-}
-
-export function selectSyncBlockReason(state: StudioState): string | null {
-  const blocked = selectPatchBlockReason(state)
-  if (blocked) return blocked
-  return state.bodyPatches[state.platform]?.state === 'diverged' ? null : '当前平台没有未同步到源稿的正文改动。'
 }
 
 /** 新一轮只部分成功时，失败平台可看旧稿，但不允许复制或编辑。 */
@@ -619,7 +510,15 @@ function selectBaseDocument(state: StudioState, platform: PlatformId): RenderedD
 function selectDocument(state: StudioState, platform: PlatformId): RenderedDocument | null {
   const original = selectBaseDocument(state, platform)
   const patch = state.bodyPatches[platform]
-  return original && patch ? { ...original, html: patch.html, plainText: patch.plainText, warnings: patch.mapping.warnings } : original
+  const title = state.titleOverrides[platform]
+  if (!original || (!patch && title === undefined)) return original
+  return {
+    ...original,
+    html: patch?.html ?? original.html,
+    plainText: patch?.plainText ?? original.plainText,
+    warnings: patch?.baseline.warnings ?? original.warnings,
+    title: title === undefined ? original.title : title.trim() || null,
+  }
 }
 
 export function selectActiveDocument(state: StudioState): RenderedDocument | null {

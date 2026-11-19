@@ -8,6 +8,7 @@ import { AssetPairing } from '@/features/assets/AssetPairing'
 
 export interface SourcePanelProps {
   readonly markdown: string
+  readonly sourceLocked: boolean
   readonly onMarkdownChange: (value: string) => void
   readonly onImport: (files: readonly File[]) => void
   readonly importNotice: ImportNotice | null
@@ -15,8 +16,6 @@ export interface SourcePanelProps {
   readonly status: StudioStatus
   readonly stats: DocumentStats | null
   readonly parseErrorMessage: string | null
-  readonly titleOverride: string
-  readonly onTitleChange: (value: string) => void
   readonly titleCandidate: TitleCandidate | null
   readonly remoteImages: readonly string[]
   readonly localImages: readonly string[]
@@ -26,31 +25,10 @@ export interface SourcePanelProps {
   readonly onUnbindAsset: (raw: string) => void
 }
 
-function titleSourceHint(
-  titleOverride: string,
-  candidate: TitleCandidate | null,
-  hasSource: boolean,
-): string {
-  const manual = titleOverride.trim()
-  if (!hasSource) {
-    return '导入或粘贴源稿后这里会自动带出标题；也可以先手动填写。'
-  }
-  if (manual !== '') {
-    return candidate?.value
-      ? `标题来源：手动填写，覆盖源稿里的「${candidate.value}」`
-      : '标题来源：手动填写'
-  }
-  if (!candidate || candidate.value === null) {
-    return '源稿里没有可提取的标题：请手动填写，否则成稿没有标题（正文仍可单独复制）。'
-  }
-  return candidate.from === 'frontmatter'
-    ? `标题来源：源稿 YAML title「${candidate.value}」`
-    : `标题来源：源稿首个一级标题「${candidate.value}」`
-}
-
-/** 左栏：源稿编辑、导入、字数统计、标题字段与本地图片配对。 */
+/** 左栏接收、查看原稿，并保留原稿引用的图片配对。 */
 export function SourcePanel({
   markdown,
+  sourceLocked,
   onMarkdownChange,
   onImport,
   importNotice,
@@ -58,8 +36,6 @@ export function SourcePanel({
   status,
   stats,
   parseErrorMessage,
-  titleOverride,
-  onTitleChange,
   titleCandidate,
   remoteImages,
   localImages,
@@ -112,7 +88,9 @@ export function SourcePanel({
 
       <div className="panel__body">
         <p className="field__hint source__import-hint">
-          拖入 Markdown 或 TXT 文件，也可以点击「导入 .md」或粘贴 Markdown。刷新前请另存稿件。
+          {sourceLocked
+            ? '原稿只读。右侧编辑只影响当前平台，不会改动这里。'
+            : '拖入 Markdown 或 TXT 文件，或把 Markdown 粘贴到下方。生成成稿后，原稿将保持只读。'}
         </p>
 
         {importNotice === null ? null : (
@@ -157,6 +135,7 @@ export function SourcePanel({
             className="source__textarea"
             value={markdown}
             onChange={(event) => onMarkdownChange(event.currentTarget.value)}
+            readOnly={sourceLocked}
             aria-describedby="source-stats"
             spellCheck={false}
             placeholder="把 Markdown 粘贴到这里，或点击上方「导入 .md」。"
@@ -164,31 +143,14 @@ export function SourcePanel({
           {parseErrorMessage === null ? null : (
             <p className="field__error" role="status">
               源稿暂时无法解析：{parseErrorMessage}
-              。仍可继续编辑；点「一键排版」时会再解析一次。
+              。{sourceLocked ? '请修正原文件后重新导入。' : '请检查上方原稿后再排版。'}
             </p>
           )}
         </div>
 
-        <div className="field">
-          <label className="field__label" htmlFor="title-override">
-            文章标题（可留空）
-          </label>
-          <input
-            id="title-override"
-            className="field__input"
-            type="text"
-            value={titleOverride}
-            onChange={(event) => {
-              onTitleChange(event.target.value)
-            }}
-            placeholder={
-              titleCandidate?.value ?? '源稿没有标题时，在这里填写；留空则按源稿提取'
-            }
-          />
-          <p className="field__hint">
-            {titleSourceHint(titleOverride, titleCandidate, markdown.trim() !== '')}
-          </p>
-        </div>
+        {titleCandidate?.value ? (
+          <p className="field__hint">原稿标题：{titleCandidate.value}</p>
+        ) : null}
 
         <AssetPairing
           remoteImages={remoteImages}
@@ -207,7 +169,7 @@ export function SourcePanel({
               ready: '源稿就绪，尚未排版',
               typesetting: '正在排版',
               typeset: '已排版，可在右侧编辑或复制',
-              stale: '源稿有改动，需重新排版',
+              stale: '原稿配图有改动，需重新排版',
               'parse-error': '源稿无法解析',
             }[status]
           }
@@ -218,7 +180,7 @@ export function SourcePanel({
         ref={fileRef}
         className="visually-hidden"
         type="file"
-        accept=".md,text/markdown"
+        accept=".md,.markdown,.mdown,.txt,text/markdown,text/plain"
         tabIndex={-1}
         aria-hidden="true"
         onChange={handleFileChange}

@@ -7,15 +7,15 @@ import { corePorts } from '@/app/core-ports'
 
 /**
  * 整页集成测试：真实核心层 + 真实平台注册表，只有剪贴板按 jsdom 的实际能力走失败分支。
- * 覆盖「编辑源稿 → 排版 → 过期 → 复制失败」这条主链路在界面上的表现。
+ * 覆盖「导入原稿 → 排版 → 独立编辑 → 检查与复制」这条主链路在界面上的表现。
  */
 
 let container: HTMLDivElement
 let root: Root
 
-function setValue(element: HTMLTextAreaElement, value: string) {
+function setValue(element: HTMLTextAreaElement | HTMLInputElement, value: string) {
   const descriptor = Object.getOwnPropertyDescriptor(
-    window.HTMLTextAreaElement.prototype,
+    element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
     'value',
   )
   descriptor?.set?.call(element, value)
@@ -56,6 +56,25 @@ function typeSource(markdown: string) {
   }
   act(() => {
     setValue(textarea, markdown)
+  })
+}
+
+function titleField() {
+  const field = container.querySelector<HTMLInputElement>('#platform-article-title')
+  if (!field) throw new Error('找不到当前平台标题')
+  return field
+}
+
+async function importDraft(markdown: string, name = '替换.md') {
+  const panel = container.querySelector('.panel--source')
+  if (!panel) throw new Error('找不到导入区')
+  const file = new File([markdown], name)
+  Object.defineProperty(file, 'arrayBuffer', { value: () => Promise.resolve(new TextEncoder().encode(markdown).buffer) })
+  const drop = new Event('drop', { bubbles: true, cancelable: true })
+  Object.defineProperty(drop, 'dataTransfer', { value: { types: ['Files'], files: [file] } })
+  await act(async () => {
+    panel.dispatchEvent(drop)
+    await Promise.resolve()
   })
 }
 
@@ -107,13 +126,14 @@ describe('工作台整页流程', () => {
     expect(queryText('[role="tab"][aria-selected="true"]')).toContain('公众号')
   })
 
-  it('常规成稿和过期成稿都可访问发布入口', async () => {
+  it('重新导入前后都可访问发布入口', async () => {
     renderApp()
     typeSource('# 标题\n\n原正文。')
     await typesetWithShortcut()
     expect(container.querySelectorAll('.publish-links a')).toHaveLength(3)
-    typeSource('# 标题\n\n已修改的正文。')
-    expect(queryText('.status-chip')).toContain('需重新排版')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await importDraft('# 标题\n\n已修改的正文。')
+    expect(queryText('.status-chip')).toContain('源稿就绪')
     expect(container.querySelectorAll('.publish-links a')).toHaveLength(3)
   })
 
@@ -151,25 +171,16 @@ describe('工作台整页流程', () => {
     expect(container.querySelector('.article[contenteditable]')).toBeNull()
   })
 
-  it('Ctrl/Cmd+Enter 排版后可预览，改稿后过期并禁用复制', async () => {
+  it('Ctrl/Cmd+Enter 排版后，粘贴原稿也只读且可复制成稿', async () => {
     renderApp()
-    typeSource('# 一篇中文样稿\n\n第一段正文。\n\n## 小标题\n\n第二段正文。')
+    const markdown = '# 一篇中文样稿\n\n第一段正文。'
+    typeSource(markdown)
     expect(queryText('.status-chip')).toContain('源稿就绪')
-
     await typesetWithShortcut()
     expect(queryText('.status-chip')).toContain('已排版')
-    expect(container.querySelector('.article')?.textContent).toContain('第一段正文')
-    expect(buttonByText('复制正文').disabled).toBe(false)
-
-    // 改一个字 → 输出过期，复制按钮禁用并写出原因
-    typeSource('# 一篇中文样稿\n\n第一段正文，追加。\n\n## 小标题\n\n第二段正文。')
-    expect(queryText('.status-chip')).toContain('需重新排版')
-    expect(buttonByText('复制正文').disabled).toBe(true)
-    expect(container.querySelector('#copy-block-reason')?.textContent).toContain('重新排版')
-    expect(container.querySelector('.wechat-templates')).toBeNull()
-
-    // 重新排版 → 恢复可复制
-    await typesetWithShortcut()
+    expect(container.querySelector<HTMLTextAreaElement>('#source-markdown')?.readOnly).toBe(true)
+    expect(sourceDraft()).toBe(markdown)
+    expect(queryText('.article')).toBe('第一段正文。')
     expect(buttonByText('复制正文').disabled).toBe(false)
   })
 
@@ -180,7 +191,8 @@ describe('工作台整页流程', () => {
     expect(buttonByText('复制标题').disabled).toBe(false)
     expect(buttonByText('复制正文').disabled).toBe(true)
     expect(queryText('#copy-block-reason')).toContain('没有可复制的正文')
-    expect(queryText('.action-bar__buttons')).not.toContain('专注编辑')
+    act(() => buttonByText('编辑正文').click())
+    expect(titleField().value).toBe('只有标题')
     expect(container.querySelector('.wechat-templates')).toBeNull()
   })
 
@@ -307,7 +319,7 @@ describe('工作台整页流程', () => {
     expect(copy).not.toHaveBeenCalled()
   })
 
-  it('右侧改稿实时重新检查，显式同步后其它平台的过期成稿不显示清洁结果', async () => {
+  it('右侧改稿实时重新检查，不影响其它平台的检查和复制', async () => {
     await editArticle()
     const paragraph = container.querySelector<HTMLElement>('.article p')
     if (!paragraph) throw new Error('找不到正文段落')
@@ -321,10 +333,9 @@ describe('工作台整页流程', () => {
     change('已经核对风险。')
     expect(queryText('.publish-review__status')).toBe('本地未发现疑似风险')
     expect(container.querySelector('.publish-review__findings')).toBeNull()
-    syncBody()
     act(() => container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]?.click())
-    expect(queryText('.publish-review__status')).toBe('结果已过期，请重新排版')
-    expect(buttonByText('复制正文').disabled).toBe(true)
+    expect(queryText('.publish-review__status')).toBe('本地未发现疑似风险')
+    expect(buttonByText('复制正文').disabled).toBe(false)
   })
 
   async function editArticle() {
@@ -344,46 +355,99 @@ describe('工作台整页流程', () => {
     return container.querySelector<HTMLTextAreaElement>('#source-markdown')?.value
   }
 
-  function syncBody(accept = true) {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(accept)
-    try {
-      act(() => buttonByText('同步到源稿').click())
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('可能覆盖左侧同段改动'))
-    } finally {
-      confirm.mockRestore()
-    }
-  }
-
-  it('右侧编辑只影响本平台，确认同步才改左侧并令其它平台过期', async () => {
-    await editArticle()
+  it('导入后编辑两个平台，切换与重排均不会改原稿或互相覆盖', async () => {
+    renderApp()
+    const markdown = '# 标题\n\n原正文。'
+    await importDraft(markdown, '样稿.txt')
+    expect(container.querySelector<HTMLTextAreaElement>('#source-markdown')?.readOnly).toBe(true)
+    await typesetWithShortcut()
     const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-    expect(container.querySelector('.article[contenteditable]')).toBe(document.activeElement)
-    expect(buttonByText('复制正文').disabled).toBe(false)
-    expect(sourceDraft()).toBe('# 标题\n\n原正文。')
+    act(() => buttonByText('编辑正文').click())
+    act(() => setValue(titleField(), '公众号新标题'))
+    changeBodyParagraph('公众号改过的正文。')
+    expect(container.textContent).not.toContain('同步到源稿')
     act(() => tabs[1]?.click())
+    expect(queryText('.article-title')).toBe('标题')
     expect(queryText('.article')).toBe('原正文。')
     expect(buttonByText('复制正文').disabled).toBe(false)
+    act(() => buttonByText('编辑正文').click())
+    act(() => setValue(titleField(), '头条号新标题'))
+    changeBodyParagraph('头条号改过的正文。')
+    await typesetWithShortcut()
+    expect(queryText('.article-title')).toBe('头条号新标题')
+    expect(queryText('.article')).toBe('头条号改过的正文。')
     act(() => tabs[0]?.click())
-    expect(queryText('.article')).toBe('已修改的正文。')
-    syncBody(false)
-    expect(sourceDraft()).toBe('# 标题\n\n原正文。')
-    syncBody()
-    expect(sourceDraft()).toBe('# 标题\n\n已修改的正文。')
-    expect(buttonByText('同步到源稿').disabled).toBe(true)
+    expect(queryText('.article-title')).toBe('公众号新标题')
+    expect(queryText('.article')).toBe('公众号改过的正文。')
+    expect(sourceDraft()).toBe(markdown)
+    act(() => buttonByText('撤销右侧改动').click())
+    expect(queryText('.article-title')).toBe('标题')
+    expect(queryText('.article')).toBe('原正文。')
     act(() => tabs[1]?.click())
-    expect(buttonByText('复制正文').disabled).toBe(true)
-    expect(queryText('.action-bar__buttons')).not.toContain('专注编辑')
+    expect(queryText('.article-title')).toBe('头条号新标题')
+    expect(queryText('.article')).toBe('头条号改过的正文。')
   })
 
-  it('连续同步只写后来改动，撤销右侧不会回滚已同步正文', async () => {
+  it('编辑中的标题可参与两项检查、定位及复制', async () => {
     await editArticle()
-    syncBody()
-    changeBodyParagraph('第二次编辑。')
-    syncBody()
-    changeBodyParagraph('不应进入源稿。')
-    act(() => buttonByText('撤销右侧改动').click())
-    expect(queryText('.article')).toBe('第二次编辑。')
-    expect(sourceDraft()).toBe('# 标题\n\n第二次编辑。')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const copy = vi.spyOn(corePorts, 'copyRichText').mockResolvedValue({ ok: true, mode: 'rich-text' })
+    act(() => setValue(titleField(), '  自已保证盈利  '))
+    expect(queryText('.publish-review__findings')).toContain('保证盈利')
+    act(() => buttonByText('一键检测').click())
+    expect(queryText('.publish-review__status')).toContain('重新检测')
+    act(() => container.querySelector<HTMLButtonElement>('.publish-review__findings button')?.click())
+    const title = titleField()
+    expect(title.value.slice(title.selectionStart ?? 0, title.selectionEnd ?? 0)).toBe('保证盈利')
+    act(() => buttonByText('一键检查内容').click())
+    expect(queryText('.content-check__list')).toContain('自已')
+    act(() => container.querySelector<HTMLButtonElement>('.content-check__list button[aria-label^="定位标题"]')?.click())
+    expect(title.value.slice(title.selectionStart ?? 0, title.selectionEnd ?? 0)).toBe('自已')
+    act(() => buttonByText('复制标题').click())
+    await flush()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(copy.mock.calls[0]?.[0].plainText).toBe('自已保证盈利')
+    act(() => setValue(title, ''))
+    expect(buttonByText('复制标题').disabled).toBe(true)
+    expect(container.querySelector('.content-check__list')).toBeNull()
+  })
+
+  it('标题校对结果在普通预览和编辑框之间可以继续定位', async () => {
+    renderApp()
+    typeSource('# 自已来检查\n\n正常正文。')
+    await typesetWithShortcut()
+    const locateTitle = () => {
+      const button = container.querySelector<HTMLButtonElement>('.content-check__list button[aria-label^="定位标题"]')
+      if (!button) throw new Error('找不到校对标题结果')
+      act(() => button.click())
+    }
+    act(() => buttonByText('一键检查内容').click())
+    act(() => buttonByText('编辑正文').click())
+    locateTitle()
+    expect(titleField().value.slice(titleField().selectionStart ?? 0, titleField().selectionEnd ?? 0)).toBe('自已')
+    act(() => buttonByText('一键检查内容').click())
+    act(() => buttonByText('完成编辑').click())
+    locateTitle()
+    expect(container.querySelector('.content-check__notice')).toBeNull()
+  })
+
+  it('标题选区在进出专注编辑时保持不变', async () => {
+    renderApp()
+    typeSource('# 标题选区\n\n正常正文。')
+    await typesetWithShortcut()
+    act(() => buttonByText('编辑正文').click())
+    const title = titleField()
+    act(() => {
+      title.focus()
+      title.setSelectionRange(0, 2)
+      buttonByText('专注编辑').click()
+    })
+    expect(document.activeElement).toBe(title)
+    expect(title.selectionEnd).toBe(2)
+    act(() => { title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(buttonByText('专注编辑')).toBeTruthy()
+    expect(document.activeElement).toBe(title)
+    expect(title.selectionEnd).toBe(2)
   })
 
   it('编辑后的正文进入复制失败的手动兜底', async () => {
@@ -409,15 +473,24 @@ describe('工作台整页流程', () => {
     expect(sourceDraft()).toBe('# 标题\n\n原正文。')
   })
 
-  it('新基线仍显示旧补丁，撤销后显示新成稿', async () => {
+  it('失败或取消导入不改旧稿；确认替换才清空右侧，再按新原稿排版', async () => {
     await editArticle()
-    typeSource('# 标题\n\n左侧新版本。')
-    await typesetWithShortcut()
+    act(() => setValue(titleField(), '上一稿平台标题'))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    await importDraft('   ', '空稿.md')
+    expect(queryText('.import-notice')).toContain('没有可排版的文字')
+    expect(confirm).not.toHaveBeenCalled()
+    await importDraft('# 新标题\n\n新版本。')
+    expect(titleField().value).toBe('上一稿平台标题')
     expect(queryText('.article')).toBe('已修改的正文。')
-    expect(buttonByText('同步到源稿').disabled).toBe(true)
-    expect(queryText('#article-patch-status')).toContain('排版基线已变')
-    act(() => buttonByText('撤销右侧改动').click())
-    expect(queryText('.article')).toBe('左侧新版本。')
+    expect(sourceDraft()).toBe('# 标题\n\n原正文。')
+    await importDraft('# 新标题\n\n新版本。')
+    expect(queryText('.status-chip')).toContain('源稿就绪')
+    expect(container.querySelector('.article')).toBeNull()
+    expect(buttonByText('复制正文').disabled).toBe(true)
+    await typesetWithShortcut()
+    expect(queryText('.article-title')).toBe('新标题')
+    expect(queryText('.article')).toBe('新版本。')
   })
 
   function templateChoice(name: string) {
@@ -435,7 +508,7 @@ describe('工作台整页流程', () => {
     })
   }
 
-  it.each([0, 1])('换版只更新当前平台（标签 %s），并从新基线继续回写', async (index) => {
+  it.each([0, 1])('换版只更新当前平台（标签 %s），标题改动不覆盖其他平台', async (index) => {
     renderApp()
     const markdown = '---\ntitle: 城市手记\n---\n\n原文。\n\n## 路线\n\n沿河向北。'
     typeSource(markdown)
@@ -454,26 +527,22 @@ describe('工作台整页流程', () => {
       expect(container.querySelector<HTMLTextAreaElement>('#source-markdown')?.value).toBe(markdown)
       act(() => buttonByText('编辑正文').click())
       expect(templateChoice('杂志长文').disabled).toBe(true)
-      changeBodyParagraph('编辑后的第一段更长。')
-      syncBody()
+      act(() => setValue(titleField(), '独立标题'))
       act(() => buttonByText('完成编辑').click())
       act(() => templateChoice('杂志长文').click())
       expect(templateChoice('杂志长文').getAttribute('aria-pressed')).toBe('true')
-      expect(queryText('.article')).toContain('编辑后的第一段更长。')
+      expect(queryText('.article-title')).toBe('独立标题')
       act(() => tabs[1 - index]?.click())
-      expect(container.querySelector('.wechat-templates')).toBeNull()
-      expect(buttonByText('复制正文').disabled).toBe(true)
+      expect(templateChoice('观点蓝调').getAttribute('aria-pressed')).toBe('true')
+      expect(queryText('.article-title')).toBe('城市手记')
+      expect(buttonByText('复制正文').disabled).toBe(false)
       act(() => tabs[index]?.click())
       expect(templateChoice('杂志长文').getAttribute('aria-pressed')).toBe('true')
-      act(() => buttonByText('编辑正文').click())
-      changeBodyParagraph('后续回写。')
-      syncBody()
-      expect(container.querySelector<HTMLTextAreaElement>('#source-markdown')?.value).toBe(markdown.replace('原文。', '后续回写。'))
-      act(() => buttonByText('完成编辑').click())
       await typesetWithShortcut()
       expect(templateChoice('杂志长文').getAttribute('aria-pressed')).toBe('true')
       act(() => templateChoice('观点蓝调').click())
       expect(container.querySelector('.article h2')?.getAttribute('style')).toBe(classic)
+      expect(sourceDraft()).toBe(markdown)
     } finally {
       render.mockRestore()
     }
@@ -491,11 +560,11 @@ describe('工作台整页流程', () => {
     const edited = article.innerHTML
     act(() => buttonByText('完成编辑').click())
     expect(templateChoice('清爽留白').disabled).toBe(true)
-    expect(queryText('.wechat-templates__notice')).toContain('手动样式')
+    expect(queryText('.wechat-templates__notice')).toContain('手动正文改动')
     expect(article.innerHTML).toBe(edited)
   })
 
-  it('小标题的手动换行拒绝同步；可换版，但保留旧补丁直到撤销', async () => {
+  it('小标题的手动换行不会写回源稿；换版限制不会丢失手改内容', async () => {
     renderApp()
     const markdown = '# 标题\n\n## 甲 乙\n\n正文。'
     typeSource(markdown)
@@ -509,15 +578,10 @@ describe('工作台整页流程', () => {
       heading.innerHTML = '甲<br>乙'
       heading.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    syncBody()
-    expect(queryText('.article-edit__issue')).toContain('Markdown 小标题无法保留手动换行')
     expect(sourceDraft()).toBe(markdown)
     act(() => buttonByText('完成编辑').click())
-    expect(templateChoice('清爽留白').disabled).toBe(false)
-    act(() => templateChoice('清爽留白').click())
-    expect(templateChoice('清爽留白').getAttribute('aria-pressed')).toBe('true')
+    expect(templateChoice('清爽留白').disabled).toBe(true)
     expect(container.querySelector('.article h2')?.innerHTML).toBe('甲<br>乙')
-    expect(queryText('#article-patch-status')).toContain('排版基线已变')
     act(() => buttonByText('撤销右侧改动').click())
     expect(container.querySelector('.article h2')?.textContent).toBe('甲 乙')
   })
@@ -543,15 +607,16 @@ describe('工作台整页流程', () => {
   })
 
   it('重新生成的正文与当前编辑文字不一致时拒绝安装模板', async () => {
-    await editArticle()
-    act(() => buttonByText('完成编辑').click())
+    renderApp()
+    typeSource('# 标题\n\n原正文。')
+    await typesetWithShortcut()
     const realTypeset = corePorts.typeset.bind(corePorts)
     const render = vi.spyOn(corePorts, 'typeset').mockImplementationOnce((request, platform) =>
       realTypeset({ ...request, markdown: '# 标题\n\n与成稿不同的文字。' }, platform))
     try {
       act(() => templateChoice('清爽留白').click())
       expect(queryText('.wechat-templates__notice')).toContain('会改变正文文字')
-      expect(queryText('.article')).toBe('已修改的正文。')
+      expect(queryText('.article')).toBe('原正文。')
       expect(templateChoice('观点蓝调').getAttribute('aria-pressed')).toBe('true')
     } finally {
       render.mockRestore()
@@ -599,8 +664,7 @@ describe('工作台整页流程', () => {
     expect(container.querySelector('#source-markdown')).toBe(source)
     expect(sourceDraft()).toBe('# 标题\n\n原正文。')
     expect(queryText('.article')).toBe('专注时修改。')
-    syncBody()
-    expect(sourceDraft()).toBe('# 标题\n\n专注时修改。')
+    expect(container.textContent).not.toContain('同步到源稿')
   })
 
   it('完全撤销后重新排版不需要确认', async () => {
@@ -618,16 +682,6 @@ describe('工作台整页流程', () => {
     } finally {
       confirm.mockRestore()
     }
-  })
-
-  it('修改源稿后保留上版正文预览，但不能继续编辑或复制', async () => {
-    await editArticle()
-    typeSource('# 标题\n\n另一份源稿。')
-    expect(queryText('.article')).toBe('已修改的正文。')
-    expect(container.querySelector('.article[contenteditable]')).toBeNull()
-    expect(container.querySelector('.editor-tools')).toBeNull()
-    expect(queryText('.action-bar__buttons')).not.toContain('编辑正文')
-    expect(buttonByText('复制正文').disabled).toBe(true)
   })
 
   it('切换平台不改动源稿内容，失败平台标签带文字标记', async () => {
@@ -672,7 +726,8 @@ describe('工作台整页流程', () => {
     act(() => toggle.click())
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
 
-    typeSource('# 新稿\n\n不含图片的正文。')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await importDraft('# 新稿\n\n不含图片的正文。')
     await typesetWithShortcut()
     expect(container.querySelector('.preview-compatibility')).toBeNull()
   })

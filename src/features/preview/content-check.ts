@@ -1,4 +1,5 @@
 import { collectBodyUnits } from '@/core/publish-review/units'
+import { articleTitleElement } from './issue-locations'
 import { normalizeText } from './content-census'
 import { block, located, sameBlockAfterEdit, unavailable, type LocateOutcome } from './locate-shared'
 
@@ -65,9 +66,11 @@ export function articleTextUnits(canvas: Element): readonly TextUnit[] {
     walk(root)
     flush()
   }
-  const title = canvas.querySelector('.article-title')
+  const title = articleTitleElement(canvas)
   const body = canvas.querySelector('#platform-article')
-  if (title) collect(title, true)
+  if (title instanceof HTMLInputElement) {
+    if (title.value.trim()) units.push({ element: title, title: true, text: title.value.trim(), pieces: [] })
+  } else if (title) collect(title, true)
   if (body) collect(body, false)
   return units
 }

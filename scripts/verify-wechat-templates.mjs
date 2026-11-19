@@ -180,15 +180,7 @@ try {
   assert.match(clipboard.plain, /晨间集市/)
   assert.doesNotMatch(clipboard.html, /uma-source|城市散步手记|沿河散步手记/)
 
-  async function syncSource() {
-    const confirm = page.waitForEvent('dialog')
-    const click = button('同步到源稿').click()
-    const dialog = await confirm
-    assert.match(dialog.message(), /可能覆盖左侧同段改动/u)
-    await dialog.accept()
-    await click
-  }
-
+  await apply('暖纸手记')
   await button('编辑正文').click()
   await picker.click()
   await gallery.getByText('先点「完成编辑」，再切换模板。').waitFor()
@@ -205,13 +197,15 @@ try {
   await page.keyboard.insertText(' 下次再来。')
   assert.doesNotMatch(await source.inputValue(), /下次再来/)
   await button('完成编辑').click()
-  await syncSource()
-  assert.match(await source.inputValue(), /下次再来/)
-  await apply('暖纸手记')
+  assert.equal(await source.inputValue(), markdown)
+  await picker.click()
+  assert(await choice('暖纸手记').isDisabled())
+  await page.keyboard.press('Escape')
   assert.match(await article.textContent(), /下次再来/)
   assert.equal(await article.locator('img').getAttribute('src'), imgSrc)
   await tab('头条').click()
-  assert(await button('复制正文').isDisabled())
+  assert(!(await button('复制正文').isDisabled()))
+  assert.doesNotMatch(await article.textContent(), /下次再来/)
   await tab('公众号').click()
   assert.equal(await picker.getAttribute('aria-label'), '排版模板：暖纸手记')
   await button('专注编辑').click()
@@ -236,14 +230,13 @@ try {
     await page.keyboard.press('Escape')
     await gallery.waitFor({ state: 'hidden' })
   }
-  await source.fill(markdown + '\n\n新增段落。')
-  assert.equal(await picker.count(), 0)
-  assert(await button('复制正文').isDisabled())
+  assert.equal(await source.evaluate((el) => el.readOnly), true)
   await page.reload()
   await source.fill(markdown)
   await typeset()
   assert.equal(await picker.getAttribute('aria-label'), '排版模板：观点蓝调')
   // Chrome uses <b> alongside Markdown's <strong> when the editor formats adjacent text.
+  await page.reload()
   await source.fill('# 相邻格式回归\n\n**已加粗**相邻文字余下。')
   await typeset()
   await button('编辑正文').click()
@@ -257,11 +250,9 @@ try {
   })
   await page.locator('.editor-tools').getByRole('button', { name: /加粗/ }).click()
   assert.equal(await source.inputValue(), '# 相邻格式回归\n\n**已加粗**相邻文字余下。')
-  await syncSource()
-  assert.equal(await source.inputValue(), '# 相邻格式回归\n\n**已加粗相邻文字**余下。')
   await button('完成编辑').click()
-  await apply('暖纸手记')
-  assert.equal(await article.locator('strong').textContent(), '已加粗相邻文字')
+  await typeset()
+  assert.match(await article.innerHTML(), /<(?:b|strong)[^>]*>相邻文字/u)
   assert.equal(await article.textContent(), '已加粗相邻文字余下。')
   assert.deepEqual(errors, [])
 

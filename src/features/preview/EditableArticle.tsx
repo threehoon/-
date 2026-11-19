@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RenderedDocument } from '@/core/types'
-import type { BodyPatch, StudioState } from '@/app/studio-state'
-import type { LocalArticleImage, StudioApi } from '@/app/use-studio'
+import type { StudioApi } from '@/app/use-studio'
 import { reasonOf } from '@/app/text'
 import { Icon } from '@/components/Icon'
 import { inspectUrl } from '@/core/security/policy'
-import { ARTICLE_SOURCE_ATTR, readSourceMarker } from '@/core/render/source-markers'
 import { EditorToolbar, type EditorCommand } from '@/features/editor/EditorToolbar'
 import { activeTypography, FontSizeHistory, runNativeTextStyle, type ActiveTypography } from '@/features/editor/typography'
 import { clipboardImage, LOCAL_IMAGE_ACCEPT, readLocalImage } from './local-image'
@@ -41,10 +39,7 @@ interface ArticleProps {
   readonly document: RenderedDocument
   readonly onEdit?: StudioApi['editBody']
   readonly onImageError?: (src: string) => void
-  readonly patch: BodyPatch | null
-  readonly syncBlockReason: string | null
-  readonly syncNotice: StudioState['syncNotice']
-  readonly onSync?: () => void
+  readonly hasPlatformEdits: boolean
   readonly onDiscard?: () => void
   readonly focused: boolean
   readonly onFocusChange?: (enabled: boolean) => void
@@ -78,19 +73,10 @@ function dropRange(article: HTMLElement, x: number, y: number): Range | null {
   return range && article.contains(range.commonAncestorContainer) ? range : null
 }
 
-function imageDropNeedsSourceEdit(article: HTMLElement, range: Range): boolean {
+function imageDropInCode(range: Range): boolean {
   const origin = range.startContainer
   const element = origin instanceof Element ? origin : origin.parentElement
-  if (element?.closest('pre,code')) return true
-  const root = article.querySelector(`:scope > [${ARTICLE_SOURCE_ATTR}]`)
-  if (!root?.contains(origin)) return false
-  let preceding: Node | undefined = origin === root ? root.childNodes[range.startOffset - 1] : origin
-  while (preceding && preceding.parentNode !== root) preceding = preceding.parentNode ?? undefined
-  for (let node: Node | undefined = preceding; node; node = node.previousSibling ?? undefined) {
-    const marker = readSourceMarker(node)
-    if (marker) return marker.edge === 's' && marker.protected
-  }
-  return false
+  return Boolean(element?.closest('pre,code'))
 }
 
 function restoreRange(article: HTMLElement, saved: Range | null, collapse = false): Range {
@@ -153,7 +139,7 @@ function restoreReadingPosition(article: HTMLElement, position: LayoutPosition) 
   else if (position.top >= 0 && change !== 0) article.ownerDocument.defaultView?.scrollBy(0, change)
 }
 
-export function EditableArticle({ document, onEdit, onImageError, patch, syncBlockReason, syncNotice, onSync, onDiscard, focused, onFocusChange, renderLayout }: ArticleProps) {
+export function EditableArticle({ document, onEdit, onImageError, hasPlatformEdits, onDiscard, focused, onFocusChange, renderLayout }: ArticleProps) {
   const [editingHtml, setEditingHtml] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -173,7 +159,7 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
   const lastHtml = useRef('')
   const editing = editingHtml !== null && onEdit !== undefined
   // Keep the initial markup for the lifetime of an edit session, even while temporarily read-only.
-  // Reapplying the synced HTML would destroy the browser's selection, composition and undo history.
+  // Reapplying the latest HTML would destroy the browser's selection, composition and undo history.
   const html = editingHtml ?? document.html
   const markup = useMemo(() => ({ __html: html }), [html])
 
@@ -183,6 +169,9 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
     const position = layoutPosition.current
     layoutPosition.current = null
     if (article.getAttribute('contenteditable') === 'true') {
+      // The title input stays mounted across layout changes; leave its caret alone.
+      const active = article.ownerDocument.activeElement
+      if (active instanceof HTMLInputElement && article.parentElement?.contains(active)) return
       article.focus({ preventScroll: true })
       const saved = position?.range
       if (saved && !composing.current && article.contains(saved.commonAncestorContainer)) {
@@ -207,12 +196,12 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
     setTypography((previous) => previous.fontId === next.fontId && previous.size === next.size ? previous : next)
   }, [])
 
-  function update(article: HTMLElement, image?: LocalArticleImage) {
+  function update(article: HTMLElement) {
     if (!onEdit || composing.current) return
     const nextHtml = article.innerHTML
     if (nextHtml === lastHtml.current) return
     lastHtml.current = nextHtml
-    onEdit(nextHtml, editedArticleText(article), image)
+    onEdit(nextHtml, editedArticleText(article))
   }
 
   function rememberCaret() {
@@ -221,9 +210,9 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
     if (range) caret.current = range
   }
 
-  function commitEdit(article: HTMLElement, operation: () => boolean, image?: LocalArticleImage): boolean {
+  function commitEdit(article: HTMLElement, operation: () => boolean): boolean {
     if (composing.current) return false
-    // execCommand may fire input before returning; commit here exactly once, with any image metadata.
+    // execCommand may fire input before returning; commit here exactly once.
     commanding.current = true
     try {
       if (!operation()) return false
@@ -231,14 +220,14 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
       commanding.current = false
     }
     fontSizeHistory.onInput(article, lastHtml.current, '')
-    update(article, image)
+    update(article)
     rememberCaret()
     refreshTypography(article, rangeIn(article))
     return true
   }
 
-  function runEdit(article: HTMLElement, command: string, value?: string, image?: LocalArticleImage): boolean {
-    return commitEdit(article, () => article.ownerDocument.execCommand(command, false, value), image)
+  function runEdit(article: HTMLElement, command: string, value?: string): boolean {
+    return commitEdit(article, () => article.ownerDocument.execCommand(command, false, value))
   }
 
   function formatTypography(change: { family: string } | { size: number }): boolean {
@@ -351,7 +340,7 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
         image.src = src
         image.alt = file.name.replace(/\.[^.]+$/, '') || '粘贴图片'
         image.style.cssText = 'max-width:100%;height:auto;vertical-align:middle;'
-        if (!runEdit(article, 'insertHTML', image.outerHTML, { url: src, fileName: file.name })) {
+        if (!runEdit(article, 'insertHTML', image.outerHTML)) {
           throw new Error('没有插入图片。请将光标放在正文后再试。')
         }
       } finally {
@@ -470,7 +459,7 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
     </button>
   ) : null
 
-  const tools = editing || patch || syncNotice ? (
+  const tools = editing || hasPlatformEdits ? (
     <div className="article-edit">
       {editing ? (
         <EditorToolbar
@@ -507,34 +496,19 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
       {editing ? (
         <div className="article-edit__guide">
           <p className="article-edit__hint" id="article-edit-hint">
-            {!patch ? <span id="article-patch-status">编辑仅影响当前平台。 </span> : null}选中文字可改字体和字号，也可拖入单张图片。
+            {!hasPlatformEdits ? '编辑仅影响当前平台。' : null}选中文字可改字体和字号，也可拖入单张图片。
           </p>
           <button type="submit" form={ARTICLE_CHECK_FORM_ID} className="btn btn--ghost btn--small">
             一键检查内容
           </button>
         </div>
       ) : null}
-      {patch ? (
+      {hasPlatformEdits ? (
         <div className="article-edit__guide">
-          <p className="article-edit__hint" id="article-patch-status" role="status">
-            {patch.state === 'superseded' ? patch.reason : patch.state === 'diverged'
-              ? '右侧有未同步的改动，仅影响当前平台。'
-              : '右侧正文与源稿关联；编辑默认只影响当前平台。'}
-            {patch.platformStyle ? ' 部分样式仅保留在当前平台成稿。' : ''}
-          </p>
-          <div className="article-edit__actions">
-              <button type="button" className="btn btn--secondary btn--small" disabled={!onSync || syncBlockReason !== null || reading}
-                aria-describedby="article-patch-status" onClick={() => {
-                  if (!readingImage.current && !composing.current) onSync?.()
-                }}>同步到源稿</button>
-              <button type="button" className="btn btn--ghost btn--small" disabled={!onDiscard}
-                aria-describedby="article-patch-status" onClick={onDiscard}>撤销右侧改动</button>
-          </div>
+          <p className="article-edit__hint" id="article-patch-status" role="status">改动仅保留在当前平台，左侧原稿不变。</p>
+          <button type="button" className="btn btn--ghost btn--small" disabled={!onDiscard || reading}
+            aria-describedby="article-patch-status" onClick={onDiscard}>撤销右侧改动</button>
         </div>
-      ) : null}
-      {syncNotice ? (
-        <p className={syncNotice.tone === 'failure' ? 'article-edit__issue' : 'article-edit__hint'}
-          data-tone={syncNotice.tone} role="status">{syncNotice.message}</p>
       ) : null}
       <input
         ref={picker}
@@ -615,8 +589,8 @@ export function EditableArticle({ document, onEdit, onImageError, patch, syncBlo
           setError('无法定位图片的插入位置，请把图片拖到正文文字旁再试。')
           return
         }
-        if (imageDropNeedsSourceEdit(event.currentTarget, at)) {
-          setError('这个位置的图片无法同步到源稿，请拖到普通正文段落再试。')
+        if (imageDropInCode(at)) {
+          setError('不能在代码里插入图片，请拖到普通正文段落再试。')
           return
         }
         void insertImage(files[0], at)

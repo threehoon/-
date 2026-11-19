@@ -170,7 +170,8 @@ it('源稿定位只匹配唯一的同类完整块，不跳到代码示例中的�
   const location = { kind: 'source', span, block: span } as const
   const baseline = link + '\n\n其它段。'
   const prefix = '新段。\n\n'
-  expect(currentSourceSpan(location, baseline, prefix + baseline)).toEqual({ start: prefix.length, end: prefix.length + link.length })
+  expect(currentSourceSpan(location, baseline, baseline)).toEqual({ start: 0, end: link.length })
+  expect(currentSourceSpan(location, baseline, prefix + baseline)).toBeNull()
   expect(currentSourceSpan(location, baseline, '例子：`' + link + '`。')).toBeNull()
   expect(currentSourceSpan(location, baseline, baseline + '\n\n' + link)).toBeNull()
 })

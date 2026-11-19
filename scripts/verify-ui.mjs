@@ -92,7 +92,7 @@ async function verifyWorkbench() {
   assert.equal(await openFocus.count(), 0)
   assert.equal(await page.locator('.panel--source .editor-tools').count(), 0)
   await page.keyboard.press('Tab')
-  await page.getByRole('link', { name: '跳到源稿编辑区' }).press('Enter')
+  await page.getByRole('link', { name: '跳到 Markdown 原稿区' }).press('Enter')
   assert(await source.evaluate((el) => document.activeElement === el && getComputedStyle(el).outlineWidth === '2px'))
   await shot('01-empty-1440')
 
@@ -111,13 +111,12 @@ async function verifyWorkbench() {
   assert.equal(await source.inputValue(), markdown, '空文件不能覆盖已导入稿件')
   await page.getByRole('button', { name: '关闭导入提示' }).click()
 
+  await page.reload()
   await page.evaluate(() => {
     const read = File.prototype.arrayBuffer
     File.prototype.arrayBuffer = function () {
       if (!this.name.startsWith('慢读')) return read.call(this)
-      return new Promise((resolve) => {
-        window.finishImport = async () => resolve(await read.call(this))
-      })
+      return new Promise((resolve) => { window.finishImport = async () => resolve(await read.call(this)) })
     }
   })
   await importMarkdown('慢读-旧.md', Buffer.from('# 过时稿'))
@@ -221,8 +220,10 @@ async function verifyWorkbench() {
   }))
   await confirmImageWarning(copyBody)
   await page.waitForFunction(() => typeof window.finishCopy === 'function')
-  await source.fill(markdown + '\n\n编辑后的段落。')
+  await page.getByRole('button', { name: /取消配对/u }).click()
   await page.locator('.status-chip[data-state="stale"]').waitFor()
+  await page.getByText(/结果已过期，请重新排版/u).waitFor()
+  assert(await page.getByRole('button', { name: '一键检测', exact: true }).isDisabled())
   await page.evaluate(() => window.finishCopy())
   assert(await copyBody.isDisabled())
   assert(!(await manualCopy.isVisible()), '过期复制不能重新露出旧正文')
@@ -236,14 +237,15 @@ async function verifyWorkbench() {
   await page.keyboard.press('Control+Enter')
   await waitTypeset()
   assert(!(await copyBody.isDisabled()))
-  assert.match(await article.innerText(), /编辑后的段落/)
+  assert.match(await article.innerText(), /图片补插位：本地图/)
+  assert(!(await page.getByRole('button', { name: '一键检测', exact: true }).isDisabled()))
 
   assert.equal(await page.locator('.preview-canvas').evaluate((el) => getComputedStyle(el).transitionDuration), '0s')
   for (const [width, height] of [[1440, 900], [1024, 768], [820, 860]]) {
     await page.setViewportSize({ width, height })
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `页面在 ${width}px 横向溢出`)
     const editorBounds = await source.boundingBox()
-    const titleBounds = await page.getByText('文章标题（可留空）', { exact: true }).boundingBox()
+    const titleBounds = await page.getByText(`原稿标题：浏览器验收样稿`, { exact: true }).boundingBox()
     assert(editorBounds && titleBounds && editorBounds.y + editorBounds.height <= titleBounds.y,
       `源稿编辑框在 ${width}px 遮挡标题字段`)
     await shot(`06-layout-${width}`)

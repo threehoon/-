@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { CompatWarning } from '@/core/types'
 import { clipExcerpt } from '@/app/text'
 import { articleTextUnits, checkArticleContent, contentFindingElement, contentRange, type ContentFinding } from './content-check'
-import { compatibilityTargets, locateRange, outcomeRange } from './issue-locations'
+import { articleTitleElement, compatibilityTargets, locateRange, outcomeRange, selectTitleInput } from './issue-locations'
 import { checkAgainstBaseline } from './content-baseline'
 import { censusOf, type ContentCensus } from './content-census'
 import { ARTICLE_CHECK_FORM_ID } from './panel-ids'
@@ -51,7 +51,8 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline }: {
     if (!registry || typeof Highlight === 'undefined') return
     const units = findings ? articleTextUnits(root) : []
     const ranges = findings?.flatMap(({ finding, element }) => {
-      const outcome = contentRange(units, finding, article, element)
+      const target = finding.title ? articleTitleElement(root) : element
+      const outcome = contentRange(units, finding, article, target)
       return outcomeRange(outcome) ?? []
     }) ?? []
     if (targets.ranges.length) registry.set(COMPAT_MARK, new Highlight(...targets.ranges))
@@ -117,20 +118,24 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline }: {
                 type="button"
                 onClick={() => {
                   const root = canvas()
-                  const outcome = root ? contentRange(articleTextUnits(root), finding, root.querySelector('#platform-article'), element) : null
+                  const target = finding.title && root ? articleTitleElement(root) : element
+                  if (target instanceof HTMLInputElement && target.value.trim() === finding.context) {
+                    selectTitleInput(target, finding.start, finding.end)
+                    setLocateNotice(null)
+                    return
+                  }
+                  const outcome = root ? contentRange(articleTextUnits(root), finding, root.querySelector('#platform-article'), target) : null
                   if (!outcome) {
                     setLocateNotice({ id: finding.id, text: '这一版成稿里没有可定位的正文。' })
                     return
                   }
                   const range = outcomeRange(outcome)
                   if (range) locateRange(range)
-                  setLocateNotice({
+                  setLocateNotice(outcome.status === 'located' ? null : {
                     id: finding.id,
                     text: outcome.status === 'unavailable'
                       ? `未能定位：${outcome.reason}`
-                      : outcome.status === 'block'
-                         ? finding.kind === 'shrunk' ? '已定位到疑似缩短的整个段落。' : '这段文字已经改过，已定位到它所在的段落。'
-                         : '',
+                      : finding.kind === 'shrunk' ? '已定位到疑似缩短的整个段落。' : '这段文字已经改过，已定位到它所在的段落。',
                   })
                 }}
                 aria-label={`定位${finding.title ? '标题' : '正文'}中的「${clipExcerpt(finding.original)}」`}

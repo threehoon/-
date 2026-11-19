@@ -58,6 +58,7 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await drop(source, [text('校对样稿.txt', draft)])
     await page.getByText(/已导入 校对样稿/).waitFor()
     assert.equal(await source.inputValue(), draft)
+    assert.equal(await source.evaluate((el) => el.readOnly), true)
     await drop(source, [{ name: '损坏.md', type: 'text/markdown', bytes: [255, 254, 253] }])
     await page.getByText(/不是 UTF-8 编码/u).waitFor()
     await drop(source, [text('无效.docx', '内容')])
@@ -68,7 +69,7 @@ export async function verifyDraftCheck({ browser, target, png }) {
       const prompt = page.waitForEvent('dialog')
       const replacement = drop(source, [text('替换.md', accept ? draft.replaceAll('\n', '\r\n') : '被取消的稿件')])
       const dialog = await prompt
-      assert.match(dialog.message(), /会替换当前稿件/u)
+      assert.match(dialog.message(), /会替换左侧原稿.*右侧六个平台/u)
       if (accept) await dialog.accept()
       else await dialog.dismiss()
       await replacement
@@ -136,9 +137,8 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await article.getByText('请参考操作说明。', { exact: true }).scrollIntoViewIfNeeded()
     await drop(article, [{ name: '保护位置.png', type: 'image/png', bytes: [...png] }],
       { text: '请参考操作说明。', offset: '请参考'.length })
-    await page.getByRole('alert').filter({ hasText: '这个位置的图片无法同步到源稿' }).waitFor()
+    await article.getByRole('img', { name: '保护位置' }).waitFor()
     assert.equal(await source.inputValue(), draft)
-    assert.equal(await article.innerHTML(), originalHtml)
     await page.getByRole('button', { name: '完成编辑', exact: true }).click()
 
     await page.getByRole('tab', { name: /^公众号/ }).click()
@@ -160,23 +160,13 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await article.locator('img[alt="配图"]').waitFor()
     assert.match(await article.innerHTML(), /图前<img[^>]*>图后/u)
     assert.equal(await source.inputValue(), draft, '右侧图片不应自动写入左侧')
-    const syncPrompt = page.waitForEvent('dialog')
-    const sync = page.getByRole('button', { name: '同步到源稿', exact: true }).click()
-    await (await syncPrompt).accept()
-    await sync
-    assert.match(await source.inputValue(), /图前!\[配图\]\(paste-1\.png\)图后/u)
+    assert.equal(await page.getByRole('button', { name: '同步到源稿', exact: true }).count(), 0)
     assert.equal(await findings.count(), 0, '正文修改清除旧校对结果')
     await typeset()
     assert.match(await article.locator('img[alt="配图"]').getAttribute('src'), /^data:image\/png/u)
     await check.click()
-    await source.fill('# 正常标题\n\n这是一段正常的正文。')
-    assert.equal(await findings.count(), 0, '修改左侧源稿清除旧校对结果')
-    await typeset()
     await page.getByRole('button', { name: '撤销右侧改动', exact: true }).click()
-    await check.click()
-    await page.getByText('本地校对与基线差异未发现问题，不代表稿件没有遗漏或语病。', { exact: true }).waitFor()
-    await page.getByRole('tab', { name: /^搜狐/ }).click()
-    await page.getByRole('button', { name: '撤销右侧改动', exact: true }).click()
+    assert.equal(await findings.count(), 0, '撤销当前平台编辑清除旧校对结果')
     const isolationDraft = '# 平台独立验收\n\n请访问[网站链接](https://example.test/site)。\n\n故意整段删掉的原文。\n\n这里是完全不同的相邻段。'
     const importPrompt = page.waitForEvent('dialog')
     const importNew = drop(source, [text('平台独立验收.md', isolationDraft)])
@@ -209,14 +199,9 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await sohu.click()
     assert.equal(await sohuLink.count(), 0, '切回搜狐兼容项不应复现')
     assert.match(await article.textContent(), /请访问。/u)
-    const isolationSync = page.waitForEvent('dialog')
-    const confirmSync = page.getByRole('button', { name: '同步到源稿', exact: true }).click()
-    await (await isolationSync).accept()
-    await confirmSync
-    assert.equal(await source.inputValue(), isolationDraft.replace('[网站链接](https://example.test/site)', ''))
+    assert.equal(await source.inputValue(), isolationDraft)
     await baijia.click()
-    await page.locator('.status-chip[data-state="stale"]').waitFor()
-    assert(await page.getByRole('button', { name: '复制正文', exact: true }).isDisabled())
+    assert(!(await page.getByRole('button', { name: '复制正文', exact: true }).isDisabled()))
     assert.doesNotMatch(await article.textContent(), /网站链接/u, '百家号自身补丁仍可查看')
     await sohu.click()
     await edit.click()
@@ -226,22 +211,23 @@ export async function verifyDraftCheck({ browser, target, png }) {
     await missingInSohu.getByRole('button', { name: /定位/u }).click()
     assert.match(await missingInSohu.textContent(), /疑似缺失段落.*基线第 2 段.*未能定位/u)
 
-    // Confirming a deletion of the last paragraph must not destroy the active native editor.
-    await source.fill('# 空稿编辑测试\n\n最后一段。')
+    // Deleting the last paragraph keeps the editor active and leaves the original untouched.
+    const lastDraft = '# 空稿编辑测试\n\n最后一段。'
+    const lastPrompt = page.waitForEvent('dialog')
+    const lastImport = drop(source, [text('最后一段.md', lastDraft)])
+    await (await lastPrompt).accept()
+    await lastImport
+    await page.getByText(/已导入 最后一段/u).waitFor()
     await typeset()
-    await page.getByRole('button', { name: '撤销右侧改动', exact: true }).click()
     await edit.click()
     await remove(article.getByText('最后一段。', { exact: true }))
-    const emptySyncPrompt = page.waitForEvent('dialog')
-    const emptySync = page.getByRole('button', { name: '同步到源稿', exact: true }).click()
-    await (await emptySyncPrompt).accept()
-    await emptySync
-    assert.equal((await source.inputValue()).trim(), '# 空稿编辑测试')
+    assert.equal(await source.inputValue(), lastDraft)
+    assert(await page.getByRole('button', { name: '复制正文', exact: true }).isDisabled())
     assert.equal(await article.getAttribute('contenteditable'), 'true')
     assert(await page.getByRole('button', { name: '完成编辑', exact: true }).isVisible())
 
     assert.deepEqual(externalRequests, [], '校对和拖放未联网')
-    return ['稿件拖入与替换确认', '校对红线与重复词定位', '兼容来源标识、外链与段落差异定位', '剪贴板隔离', '图片拖放与重新排版', '搜狐删除外链、百家号删保护段、显式回写、过期和缺段']
+    return ['稿件拖入与替换确认', '校对红线与重复词定位', '兼容来源标识、外链与段落差异定位', '剪贴板隔离', '图片拖放与重新排版', '搜狐删除外链、百家号删保护段、平台隔离和缺段']
   } finally {
     await context.close()
   }

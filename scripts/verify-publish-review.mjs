@@ -36,7 +36,13 @@ try {
     const copyTitle = page.getByRole('button', { name: '复制标题', exact: true })
     const clipboard = () => page.evaluate(() => navigator.clipboard.readText())
     const typeset = async (markdown) => {
-      await source.fill(markdown)
+      if (await source.evaluate((el) => el.readOnly)) {
+        const prompt = page.waitForEvent('dialog')
+        const importing = page.locator('.panel--source input[accept^=".md,"]').setInputFiles({ name: '预检样稿.md', mimeType: 'text/markdown', buffer: Buffer.from(markdown) })
+        await (await prompt).accept()
+        await importing
+        await page.locator('.status-chip[data-state="ready"]').waitFor()
+      } else await source.fill(markdown)
       await page.getByRole('button', { name: '一键排版', exact: true }).click()
       await page.locator('.status-chip[data-state="typeset"]').waitFor()
     }
@@ -98,9 +104,8 @@ try {
     assert.equal(await status.textContent(), '本地未发现疑似风险')
     await copyBody.click()
     assert.match(await clipboard(), /转发后领取资料/u)
-    await source.fill(`${riskyDraft}\n\n这句是修改。`)
-    assert.equal(await status.textContent(), '结果已过期，请重新排版')
-    assert(await copyBody.isDisabled())
+    assert.equal(await source.evaluate((el) => el.readOnly), true)
+    assert.equal(await source.inputValue(), riskyDraft)
     await typeset('# 社区阅读活动\n\n欢迎带一本喜欢的书。')
     assert.equal(await status.textContent(), '本地未发现疑似风险')
     await toggleSummary(false)
@@ -208,6 +213,38 @@ try {
     assert.equal(await status.textContent(), '重新检测 · 本地未发现疑似风险')
     assert.match(await review.locator('.publish-review__check').first().textContent(), /已按当前正文检测/u)
     assert.equal(await review.locator('.publish-review__findings').count(), 0)
+    await page.evaluate(() => navigator.clipboard.writeText('编辑前剪贴板'))
+    await article.getByText('欢迎带一本喜欢的书。', { exact: true }).evaluate((paragraph) => {
+      paragraph.closest('[contenteditable]').focus()
+      const range = document.createRange()
+      range.selectNodeContents(paragraph)
+      getSelection().removeAllRanges()
+      getSelection().addRange(range)
+    })
+    await page.keyboard.insertText('转发后领取资料。')
+    await attempt(copyBody, false)
+    assert.equal(await clipboard(), '编辑前剪贴板')
+    await attempt(copyBody, true)
+    assert.match(await clipboard(), /转发后领取资料/u)
+    await article.getByText('转发后领取资料。', { exact: true }).evaluate((paragraph) => {
+      paragraph.closest('[contenteditable]').focus()
+      const range = document.createRange()
+      range.selectNodeContents(paragraph)
+      getSelection().removeAllRanges()
+      getSelection().addRange(range)
+    })
+    await page.keyboard.insertText('欢迎带一本喜欢的书。')
+    let unexpectedDialog = false
+    const rejectUnexpected = (dialog) => { unexpectedDialog = true; return dialog.dismiss() }
+    page.on('dialog', rejectUnexpected)
+    try {
+      await copyBody.click()
+      assert.equal(unexpectedDialog, false, '移除当前成稿的风险后不应继续弹出旧风险')
+      assert.match(await clipboard(), /欢迎带一本喜欢的书/u)
+      assert.doesNotMatch(await clipboard(), /转发后领取资料|177 2259/u)
+    } finally {
+      page.off('dialog', rejectUnexpected)
+    }
     await page.getByRole('button', { name: '完成编辑', exact: true }).click()
     await page.screenshot({ path: join(out, `rechecked-${width}.png`) })
 
