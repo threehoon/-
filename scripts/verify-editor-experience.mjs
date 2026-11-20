@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { resetWorkbench } from './reset-workbench.mjs'
 
 const commandKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 const CJK_DRAFT = '# 性能样稿\n\n' + ('字'.repeat(100) + '\n\n').repeat(100)
@@ -28,7 +29,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
   async function scenario(id, run) {
     try {
       await page.setViewportSize(layout)
-      await page.reload()
+      await resetWorkbench(page)
       await source.waitFor()
       await run()
       scenarios.push(id)
@@ -41,7 +42,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
   }
 
   async function render(markdown) {
-    if (await source.evaluate((el) => el.readOnly)) await page.reload()
+    if (await source.evaluate((el) => el.readOnly)) await resetWorkbench(page)
     await source.fill(markdown)
     await trigger.click()
     await typeset()
@@ -638,7 +639,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await render('# 只有标题')
     assert(await openFocus.isEnabled(), '只有标题时仍可在成稿编辑中补充正文')
     assert(await copyBody.isDisabled())
-    await page.reload()
+    await resetWorkbench(page)
     await source.fill('# 键盘验收\n\n链接位置。')
     assert.equal(await openFocus.count(), 0)
     await page.evaluate(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { WorkspaceDivider } from '@/app/WorkspaceDivider'
 import type { CompatibilityLocation, CompatWarning, PlatformId, RenderedDocument } from '@/core/types'
 import type { StudioApi } from '@/app/use-studio'
@@ -13,8 +13,20 @@ import { PublishReview } from '@/features/preview/PublishReview'
 import { PreviewPanel } from '@/features/preview/PreviewPanel'
 import { currentSourceSpan } from '@/features/preview/issue-locations'
 import { SourcePanel } from '@/features/source/SourcePanel'
+import { DeepSeekSettings } from '@/features/preview/DeepSeekSettings'
+import type { DeepSeekConfig } from '@/features/preview/deepseek-check'
+import { DEEPSEEK_STORAGE_KEY, loadRememberedDeepSeekConfig } from '@/features/preview/deepseek-config-store'
 
 const PANEL_ID = 'platform-panel'
+const DRAFT_LABELS: Readonly<Record<StudioApi['draftStatus'], string>> = {
+  loading: '正在读取本机草稿…',
+  ready: '',
+  saving: '正在保存到本机…',
+  saved: '草稿已保存到本机',
+  'load-error': '无法读取本机草稿，自动保存未启用。离开前请复制备份。',
+  'save-error': '草稿未能保存。继续编辑可重试，离开前请复制备份。',
+  conflict: '另一标签页已更新草稿。本页改动未保存，请先复制备份，再刷新获取已保存的草稿。',
+}
 
 function statusLabel(api: StudioApi): string {
   const typesetAt = api.state.report?.typesetAt ?? null
@@ -61,9 +73,28 @@ function platformName(api: StudioApi, id: PlatformId): string {
 export function StudioApp({ api }: { readonly api: StudioApi }) {
   const { state, platform } = api
   const typesetting = state.typesetting
-  const canTypeset = state.markdown.trim() !== '' && !typesetting
+  const loadingDraft = api.draftStatus === 'loading'
+  const canTypeset = state.markdown.trim() !== '' && !typesetting && !loadingDraft
   const failed = failedPlatformIds(api)
   const [sourceShare, setSourceShare] = useState<number | null>(null)
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false)
+  const [ai, setAi] = useState<{ config: DeepSeekConfig | null; remembered: boolean; revision: number }>(() => {
+    const config = loadRememberedDeepSeekConfig()
+    return { config, remembered: config !== null, revision: 0 }
+  })
+  const openAiSettings = () => setAiSettingsOpen(true)
+  useEffect(() => {
+    function syncRememberedConfig(event: StorageEvent) {
+      if (event.key !== null && event.key !== DEEPSEEK_STORAGE_KEY) return
+      const config = loadRememberedDeepSeekConfig()
+      setAi((previous) => {
+        if (!previous.remembered || (config?.key === previous.config?.key && config?.model === previous.config?.model)) return previous
+        return { config, remembered: config !== null, revision: previous.revision + 1 }
+      })
+    }
+    window.addEventListener('storage', syncRememberedConfig)
+    return () => window.removeEventListener('storage', syncRememberedConfig)
+  }, [])
   const [focusedArticle, setFocusedArticle] = useState<{
     readonly generation: number
     readonly platform: PlatformId
@@ -153,6 +184,12 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
     })
   }
 
+  const draftNotice = (
+    <p className="draft-status" data-state={api.draftStatus} role="status" aria-atomic="true">
+      {DRAFT_LABELS[api.draftStatus]}
+    </p>
+  )
+
   return (
     <div className="studio">
       <a className="skip-link" href="#source-markdown" hidden={focused}>
@@ -177,10 +214,12 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
               {statusLabel(api)}
             </span>
           </p>
-          <p className="topbar__shortcut">Ctrl / ⌘ + Enter 一键排版</p>
+          {focused ? null : draftNotice}
+          {api.draftStatus === 'ready' ? <p className="topbar__shortcut">Ctrl / ⌘ + Enter 一键排版</p> : null}
         </div>
 
         <div className="topbar__actions">
+          <button className="btn btn--ghost" type="button" onClick={openAiSettings}>AI 设置</button>
           <button
             className="btn btn--primary"
             type="button"
@@ -200,7 +239,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
         </div>
       </header>
 
-      <main className="workspace" data-focus={focused} style={workspaceStyle}>
+      <main className="workspace" data-focus={focused} style={workspaceStyle} inert={loadingDraft} aria-busy={loadingDraft}>
         <div className="workspace__source" id="workspace-source" hidden={focused}>
           <SourcePanel
             markdown={state.markdown}
@@ -257,6 +296,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
                     />
                   ) : null}
                   focused={focused}
+                  draftStatus={focused ? draftNotice : undefined}
                   platform={platform}
                   copyBlockReason={api.copyBlockReason}
                   titleBlockReason={api.titleBlockReason}
@@ -301,6 +341,9 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
               onTitleEdit={api.editTitle}
               patchBlockReason={api.patchBlockReason}
               onDiscard={api.discardPatch}
+              deepSeekConfig={ai.config}
+              aiRevision={ai.revision}
+              onOpenAiSettings={openAiSettings}
               focused={focused}
               onFocusChange={changeFocus}
               availablePlatformNames={api.succeededPlatforms.map((id) =>
@@ -310,6 +353,10 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
           </div>
         </section>
       </main>
+      {aiSettingsOpen ? <DeepSeekSettings key={ai.revision} config={ai.config} remembered={ai.remembered} onClose={() => setAiSettingsOpen(false)} onSave={(config, remembered) => {
+        setAi((previous) => ({ config, remembered, revision: previous.revision + 1 }))
+        setAiSettingsOpen(false)
+      }} /> : null}
     </div>
   )
 }

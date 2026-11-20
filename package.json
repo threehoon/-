@@ -10,6 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:draft-browser": "node scripts/verify-draft-persistence.mjs",
+    "test:check-browser": "node scripts/verify-draft-check.mjs",
     "test:watch": "vitest",
     "preview": "vite preview --port 4173 --strictPort"
   },

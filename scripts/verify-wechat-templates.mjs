@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium } from 'playwright-core'
+import { resetWorkbench } from './reset-workbench.mjs'
 
 const target = new URL(process.env.TARGET_URL ?? 'http://localhost:5183/')
 const out = process.env.OUT_DIR ?? '.tmp/wechat-templates'
@@ -297,10 +298,11 @@ try {
     await button('完成编辑').click()
   }
   assert.equal(await source.evaluate((el) => el.readOnly), true)
+  await page.locator('.draft-status[data-state="saved"]').waitFor()
   await page.reload()
-  await source.fill(markdown)
-  await typeset()
-  assert.equal(await picker.getAttribute('aria-label'), '排版模板：观点蓝调')
+  await page.locator('.draft-status[data-state="saved"]').waitFor()
+  assert.equal(await source.inputValue(), markdown)
+  assert.equal(await picker.getAttribute('aria-label'), '排版模板：杂志长文')
   await button('专注编辑').click()
   await button('插入链接').click()
   await page.getByRole('textbox', { name: '链接地址' }).fill('https://example.test/old-town')
@@ -336,7 +338,7 @@ try {
   await gallery.getByText('当前成稿有手动正文改动。', { exact: false }).waitFor()
   assert(await choice('杂志长文').isDisabled())
   // Chrome uses <b> alongside Markdown's <strong> when the editor formats adjacent text.
-  await page.reload()
+  await resetWorkbench(page)
   await source.fill('# 相邻格式回归\n\n**已加粗**相邻文字余下。')
   await typeset()
   await button('编辑正文').click()

@@ -322,8 +322,8 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
     if (!focused && !(editing && link)) return
     function handleEscape(event: KeyboardEvent) {
       if (event.defaultPrevented || event.key !== 'Escape' || event.isComposing || event.keyCode === 229 || composing.current) return
-      // Leave Escape to the browser when a native popover is on top of the editor.
-      if (window.document.querySelector(':is([popover]:popover-open)')) return
+      // Leave Escape to native overlays before exiting the editor.
+      if (window.document.querySelector(':is([popover]:popover-open, dialog[open])')) return
       event.preventDefault()
       if (editing && link) closeLink()
       else changeFocus(false)
@@ -520,9 +520,10 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
           <p className="article-edit__hint" id="article-edit-hint">
             {!hasPlatformEdits ? '编辑仅影响当前平台。' : null}选中文字可改字体和字号，也可拖入单张图片。
           </p>
-          <button type="submit" form={ARTICLE_CHECK_FORM_ID} className="btn btn--ghost btn--small">
-            一键检查内容
-          </button>
+          <div className="content-check__actions">
+            <button type="submit" form={ARTICLE_CHECK_FORM_ID} className="btn btn--ghost btn--small">AI 检查内容</button>
+            <button type="submit" form={ARTICLE_CHECK_FORM_ID} value="local" className="btn btn--ghost btn--small">本地比对</button>
+          </div>
         </div>
       ) : null}
       {hasPlatformEdits ? (

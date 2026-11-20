@@ -4,7 +4,7 @@ import { normalizeText } from './content-census'
 import { block, located, sameBlockAfterEdit, unavailable, type LocateOutcome } from './locate-shared'
 
 const BLOCKS = 'article,section,p,div,h1,h2,h3,h4,h5,h6,blockquote,li,td,th,figcaption,br,hr'
-const SKIPPED = 'pre,code,script,style,template'
+const SKIPPED = 'pre,code,script,style,template,[hidden],[aria-hidden="true"]'
 const ADDRESS = /(?:https?:\/\/|mailto:|www\.)[^\s<>，。！？；：“”‘’（）【】《》]+/giu
 
 interface TextPiece {
@@ -170,7 +170,8 @@ export function contentRange(units: readonly TextUnit[], finding: ContentFinding
     const range = unit ? wholeUnit(unit) : null
     return range ? block(range) : unavailable('段落已变化或有多处相同文字，请重新点「一键检查内容」。')
   }
-  const candidates = previousElement === undefined ? [units[finding.unit]] : units.filter((unit) => unit.element === previousElement)
+  const indexed = units[finding.unit]
+  const candidates = previousElement === undefined ? [indexed] : units.filter((unit) => unit.element === previousElement)
   const unit = candidates.length === 1 ? candidates[0] : undefined
   if (!unit) return unavailable('这段文字所在的段落已经不存在了。')
   if (unit.title !== finding.title) return unavailable('正文块已变化，请重新点「一键检查内容」。')
@@ -204,7 +205,7 @@ function wholeUnit(unit: Pick<TextUnit, 'pieces'>): Range | null {
   return range.collapsed ? null : range
 }
 
-function rangeOf(unit: TextUnit, start: number, end: number): Range | null {
+export function rangeOf(unit: TextUnit, start: number, end: number): Range | null {
   const first = unit.pieces.find((part) => part.end > start)
   const last = unit.pieces.find((part) => part.end >= end)
   if (!first || !last) return null

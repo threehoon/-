@@ -137,9 +137,9 @@ export function articleTitleElement(canvas: Element): Element | null {
   return canvas.querySelector('#platform-article-title, .article-title')
 }
 
-export function selectTitleInput(input: HTMLInputElement, start: number, end: number) {
+export function selectTitleInput(input: HTMLInputElement, start: number, end: number, focus = true) {
   input.scrollIntoView?.({ block: 'center' })
-  input.focus({ preventScroll: true })
+  if (focus) input.focus({ preventScroll: true })
   const offset = input.value.length - input.value.trimStart().length
   input.setSelectionRange(offset + start, offset + end)
 }

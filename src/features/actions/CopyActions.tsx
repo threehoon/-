@@ -62,6 +62,7 @@ export interface CopyActionsProps {
   readonly focusAction?: ReactNode
   readonly templateAction?: ReactNode
   readonly focused?: boolean
+  readonly draftStatus?: ReactNode
   readonly onDismissManual: () => void
 }
 
@@ -77,6 +78,7 @@ export function CopyActions({
   focusAction,
   templateAction,
   focused = false,
+  draftStatus,
   onDismissManual,
 }: CopyActionsProps) {
   const reason = copyBlockReason ?? titleBlockReason
@@ -84,7 +86,12 @@ export function CopyActions({
   return (
     <div className="action-bar">
       <div className="action-bar__buttons">
-        {focused ? <h1 id="focused-platform-name" className="action-bar__platform">{platform.name}</h1> : null}
+        {focused ? (
+          <div className="action-bar__identity">
+            <h1 id="focused-platform-name" className="action-bar__platform">{platform.name}</h1>
+            {draftStatus}
+          </div>
+        ) : null}
         <button
           hidden={focused}
           className="btn btn--secondary"

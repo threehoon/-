@@ -270,6 +270,36 @@ code {
   max-width: 12em;
 }
 
+.draft-status {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.action-bar__identity {
+  display: flex;
+  flex-direction: column;
+  margin-inline-end: auto;
+  min-width: 0;
+}
+
+.topbar__state:has(.draft-status:not(:empty)) {
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+}
+
+.draft-status:empty {
+  position: absolute;
+  padding: 0;
+  border: 0;
+}
+
+.draft-status[data-state='load-error'],
+.draft-status[data-state='save-error'],
+.draft-status[data-state='conflict'] {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
 /* ---------- 工作区 ---------- */
 
 .workspace {
@@ -1635,6 +1665,95 @@ code {
   text-decoration: underline wavy var(--warn);
 }
 
+/* 只在有 AI 建议时保留一条导航，桌面不占用正文滚动层。 */
+.ai-locator-host:empty {
+  display: none;
+}
+
+.ai-locator-host {
+  flex: none;
+  width: 100%;
+  padding: var(--space-2) var(--space-5);
+  border-block-end: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.ai-locator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  max-width: var(--wechat-canvas-width);
+  margin-inline: auto;
+  color: var(--fg-2);
+  font-size: var(--text-sm);
+}
+
+.ai-locator-host:has(+ .preview__scroll .preview-canvas[data-editing='true']) .ai-locator {
+  max-width: var(--editor-canvas-width);
+}
+
+.ai-locator__context {
+  display: flex;
+  flex: 1 1 var(--space-10);
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: min(100%, 13rem);
+}
+
+.ai-locator__context strong {
+  flex: none;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ai-locator__context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-locator__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.ai-locator__actions .btn {
+  white-space: nowrap;
+}
+
+.ai-locator__actions .btn[aria-disabled='true'] {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--meta);
+  cursor: not-allowed;
+}
+
+.ai-locator__notice {
+  flex-basis: 100%;
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+
+::highlight(studio-content-current) {
+  background-color: var(--accent-soft);
+  color: var(--accent-strong);
+  text-decoration: underline solid var(--accent);
+}
+
+.preview:has(.ai-locator[data-title-current='true']) #platform-article-title {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+@media (pointer: coarse) {
+  .ai-locator__actions .btn {
+    min-height: calc(var(--space-10) + var(--space-1));
+  }
+}
+
 .content-check {
   display: grid;
   justify-items: start;
@@ -1645,6 +1764,66 @@ code {
 .content-check[hidden] {
   display: none;
 }
+
+.content-check__actions,
+.ai-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.content-check__actions:empty {
+  display: none;
+}
+
+.ai-settings {
+  width: min(29rem, calc(100% - var(--space-8)));
+  max-height: calc(100dvh - var(--space-8));
+  margin: auto;
+  padding: var(--space-6);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--elev-raised);
+  overflow: auto;
+}
+
+.ai-settings::backdrop {
+  background: color-mix(in srgb, var(--fg) 32%, transparent);
+}
+
+.ai-settings form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ai-settings h2 {
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+}
+
+.ai-settings p,
+.ai-settings__consent {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.ai-settings a { color: var(--accent); }
+
+.ai-settings__consent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.ai-settings__consent input { accent-color: var(--accent); }
+
+.ai-settings__status:empty { display: none; }
+
+.ai-settings__actions { justify-content: flex-end; }
 
 .content-check__summary,
 .content-check__list p {
@@ -1674,6 +1853,10 @@ code {
   overflow-wrap: anywhere;
 }
 
+.content-check__list li[aria-current='true'] {
+  background: var(--accent-soft);
+}
+
 .content-check__list li + li {
   border-top: 1px solid var(--border);
 }
@@ -1686,7 +1869,7 @@ code {
 /* 定位反馈：只落到段落或找不到时说明原因，避免点了「定位」没有任何回应。 */
 .content-check__list .content-check__notice {
   margin-block-start: var(--space-1);
-  color: var(--warning);
+  color: var(--warn);
 }
 
 .article-title {
@@ -1756,7 +1939,7 @@ code {
   column-gap: var(--space-2);
 }
 
-.article-edit__guide > .btn {
+.article-edit__guide .btn {
   min-height: 24px;
   padding-block: 0;
 }
@@ -2098,6 +2281,17 @@ code {
 
   .workspace[data-focus='true'] .preview__scroll {
     align-items: center;
+  }
+
+  /* 叠栏时页面承接正文滚动；让导航跟随成稿区钉在视口顶部。 */
+  .workspace[data-focus='false'] .panel--preview:has(.ai-locator) {
+    overflow: visible;
+  }
+
+  .workspace[data-focus='false'] .ai-locator-host {
+    position: sticky;
+    top: 0;
+    z-index: 3;
   }
 
   .preview-canvas[data-platform='wechat'] {

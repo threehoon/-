@@ -15,6 +15,7 @@ import { formatClock } from '@/app/text'
 import { Icon } from '@/components/Icon'
 import { EditableArticle, type ArticleLayout } from './EditableArticle'
 import { ArticleCheck } from './ArticleCheck'
+import type { DeepSeekConfig } from './deepseek-check'
 import { CompatibilityList, type CompatibilityListProps, type LocateFeedback } from './CompatibilityList'
 import { compatibilityTargets, locateRange } from './issue-locations'
 
@@ -48,6 +49,9 @@ export interface PreviewPanelProps {
   readonly onLocateSource?: (location: CompatibilityLocation) => boolean
   readonly publishReview?: ReactNode
   readonly onImageError?: (src: string) => void
+  readonly deepSeekConfig?: DeepSeekConfig | null
+  readonly aiRevision?: number
+  readonly onOpenAiSettings?: () => void
 }
 
 /**
@@ -81,11 +85,15 @@ export function PreviewPanel({
   compatibilityWarnings = NO_WARNINGS,
   onLocateSource,
   publishReview,
+  deepSeekConfig,
+  aiRevision = 0,
+  onOpenAiSettings,
 }: PreviewPanelProps) {
   const parseReason = report?.parseError ?? parseErrorMessage
   const isStale = status === 'stale'
   const canvas = useRef<HTMLDivElement>(null)
-  const [articleRevision, setArticleRevision] = useState(0)
+  const [aiLocatorHost, setAiLocatorHost] = useState<HTMLDivElement | null>(null)
+  const [checkReset, setCheckReset] = useState(0)
   const canCheck = status === 'typeset' && failure === null && typesetFailureReason === null
 
   function locateCompatibility(warning: CompatWarning): LocateFeedback {
@@ -149,6 +157,7 @@ export function PreviewPanel({
             ) : null}
           </div>
 
+          <div className="ai-locator-host" ref={setAiLocatorHost} />
           <div
             className="preview__scroll"
             tabIndex={0}
@@ -161,7 +170,7 @@ export function PreviewPanel({
                 <Icon name="file" size={28} className="preview-empty__icon" />
                 <h2 className="preview-empty__title">左侧还没有源稿</h2>
                 <p className="preview-empty__text">
-                  把 Markdown 粘贴到左侧源稿框，或点「导入 .md」选择本地文件。源稿只在这台电脑的浏览器里处理，不会上传到任何服务器。
+                  把 Markdown 粘贴到左侧源稿框，或点「导入 .md」选择本地文件。导入和排版在浏览器内完成，不会上传到任何服务器。AI 检查需另行启用。
                 </p>
                 <p className="preview-empty__hint">排版快捷键：Ctrl / ⌘ + Enter</p>
               </div>
@@ -230,9 +239,14 @@ export function PreviewPanel({
                 data-dimmed={status === 'typesetting' ? 'true' : 'false'}
               >
                 <ArticleCheck
-                  key={`${generation}:${sourceRevision}:${articleRevision}:${titleInput}:${platform.id}:${template}:${canCheck}`}
+                  key={`${generation}:${sourceRevision}:${checkReset}:${platform.id}:${template}:${canCheck}:${aiRevision}`}
+                  bodyHtml={document.html}
+                  titleText={document.title}
+                  config={deepSeekConfig}
+                  onOpenSettings={onOpenAiSettings}
                   enabled={canCheck}
                   baseline={contentBaseline}
+                  locatorHost={aiLocatorHost}
                   inEditor={Boolean(editing)}
                   warnings={canCheck ? compatibilityWarnings : NO_WARNINGS}
                 />
@@ -284,13 +298,13 @@ export function PreviewPanel({
       key={`${platform.id}-${generation}`}
       document={document}
       template={template}
-      onEdit={canEdit && onBodyEdit ? (...edit) => {
-        onBodyEdit(...edit)
-        setArticleRevision((previous) => previous + 1)
-      } : undefined}
+      onEdit={canEdit ? onBodyEdit : undefined}
       onImageError={onImageError}
       hasPlatformEdits={hasPlatformEdits}
-      onDiscard={status === 'typesetting' ? undefined : onDiscard}
+      onDiscard={status === 'typesetting' || !onDiscard ? undefined : () => {
+        onDiscard()
+        setCheckReset((previous) => previous + 1)
+      }}
       focused={focused}
       onFocusChange={onFocusChange}
       renderLayout={renderLayout}

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
 import { arch, cpus, platform, release } from 'node:os'
 import { join } from 'node:path'
@@ -6,6 +7,7 @@ import { chromium } from 'playwright-core'
 import { verifyEditorExperience } from './verify-editor-experience.mjs'
 import { verifyPublishLinks } from './verify-publish-links.mjs'
 import { verifyDraftCheck } from './verify-draft-check.mjs'
+import { resetWorkbench } from './reset-workbench.mjs'
 
 const editorOnly = process.argv.includes('--editor-only')
 const draftOnly = process.argv.includes('--draft-only')
@@ -20,8 +22,9 @@ const body = fixture.replace(/^---\n[\s\S]*?\n---\n\n# [^\n]+\n/u, '').replace(/
 const markdown = `# 浏览器验收样稿\n\n![可加载](${goodImage})\n\n![失效外链](${missingImage})\n\n![本地图](images/local.png)\n\n${body}`
 
 await mkdir(out, { recursive: true })
+const installedChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const browser = await chromium.launch({
-  executablePath: process.env.CHROME_BIN ?? chromium.executablePath(),
+  executablePath: process.env.CHROME_BIN ?? (existsSync(installedChrome) ? installedChrome : chromium.executablePath()),
   headless: true,
 })
 try {
@@ -111,7 +114,11 @@ async function verifyWorkbench() {
   assert.equal(await source.inputValue(), markdown, '空文件不能覆盖已导入稿件')
   await page.getByRole('button', { name: '关闭导入提示' }).click()
 
+  await page.locator('.draft-status[data-state="saved"]').waitFor()
   await page.reload()
+  await page.locator('.draft-status[data-state="saved"]').waitFor()
+  assert.equal(await source.inputValue(), markdown, '刷新应保留刚导入的源稿')
+  await resetWorkbench(page)
   await page.evaluate(() => {
     const read = File.prototype.arrayBuffer
     File.prototype.arrayBuffer = function () {

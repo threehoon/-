@@ -98,6 +98,9 @@ afterEach(() => {
     root.unmount()
   })
   container.remove()
+  vi.unstubAllGlobals()
+  Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal')
+  Reflect.deleteProperty(HTMLDialogElement.prototype, 'close')
 })
 
 describe('工作台整页流程', () => {
@@ -389,8 +392,38 @@ describe('工作台整页流程', () => {
     expect(queryText('.article')).toBe('头条号改过的正文。')
   })
 
+  async function enableDeepSeek() {
+    vi.stubGlobal('isSecureContext', true)
+    const modal = vi.fn(function (this: HTMLDialogElement) { this.open = true })
+    const close = vi.fn(function (this: HTMLDialogElement) { this.open = false })
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: { value: modal, configurable: true }, close: { value: close, configurable: true },
+    })
+    const reply = (issues: unknown[]) => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ issues }) } }] }))
+    const fetchAi = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply([]))
+      .mockImplementation(() => Promise.resolve(reply([{ block: 0, quote: '自已', problem: '错别字', suggestion: '自己' }])))
+    vi.stubGlobal('fetch', fetchAi)
+    act(() => buttonByText('AI 检查内容').click())
+    expect(fetchAi).not.toHaveBeenCalled()
+    const key = container.querySelector<HTMLInputElement>('#deepseek-key')
+    if (!key) throw new Error('找不到 API Key 字段')
+    act(() => setValue(key, 'test-only'))
+    expect(buttonByText('启用 DeepSeek').disabled).toBe(true)
+    act(() => buttonByText('测试连接').click())
+    await flush()
+    expect(queryText('.ai-settings__status')).toContain('连接成功')
+    expect(buttonByText('启用 DeepSeek').disabled).toBe(true)
+    act(() => container.querySelector<HTMLInputElement>('.ai-settings__consent input')?.click())
+    act(() => buttonByText('启用 DeepSeek').click())
+    expect(modal).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    return fetchAi
+  }
+
   it('编辑中的标题可参与两项检查、定位及复制', async () => {
     await editArticle()
+    const fetchAi = await enableDeepSeek()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const copy = vi.spyOn(corePorts, 'copyRichText').mockResolvedValue({ ok: true, mode: 'rich-text' })
     act(() => setValue(titleField(), '  自已保证盈利  '))
@@ -400,7 +433,9 @@ describe('工作台整页流程', () => {
     act(() => container.querySelector<HTMLButtonElement>('.publish-review__findings button')?.click())
     const title = titleField()
     expect(title.value.slice(title.selectionStart ?? 0, title.selectionEnd ?? 0)).toBe('保证盈利')
-    act(() => buttonByText('一键检查内容').click())
+    act(() => buttonByText('AI 检查内容').click())
+    await flush()
+    expect(fetchAi).toHaveBeenCalledTimes(2)
     expect(queryText('.content-check__list')).toContain('自已')
     act(() => container.querySelector<HTMLButtonElement>('.content-check__list button[aria-label^="定位标题"]')?.click())
     expect(title.value.slice(title.selectionStart ?? 0, title.selectionEnd ?? 0)).toBe('自已')
@@ -409,8 +444,10 @@ describe('工作台整页流程', () => {
     expect(confirm).toHaveBeenCalledOnce()
     expect(copy.mock.calls[0]?.[0].plainText).toBe('自已保证盈利')
     act(() => setValue(title, ''))
+    await flush()
     expect(buttonByText('复制标题').disabled).toBe(true)
-    expect(container.querySelector('.content-check__list')).toBeNull()
+    expect(queryText('.content-check__list')).toContain('标题已清空，无法定位')
+    expect(fetchAi).toHaveBeenCalledTimes(2)
   })
 
   it('标题校对结果在普通预览和编辑框之间可以继续定位', async () => {
@@ -422,11 +459,14 @@ describe('工作台整页流程', () => {
       if (!button) throw new Error('找不到校对标题结果')
       act(() => button.click())
     }
-    act(() => buttonByText('一键检查内容').click())
+    await enableDeepSeek()
+    act(() => buttonByText('AI 检查内容').click())
+    await flush()
     act(() => buttonByText('编辑正文').click())
     locateTitle()
     expect(titleField().value.slice(titleField().selectionStart ?? 0, titleField().selectionEnd ?? 0)).toBe('自已')
-    act(() => buttonByText('一键检查内容').click())
+    act(() => buttonByText('AI 检查内容').click())
+    await flush()
     act(() => buttonByText('完成编辑').click())
     locateTitle()
     expect(container.querySelector('.content-check__notice')).toBeNull()

@@ -35,6 +35,8 @@ import {
 } from './studio-state'
 import type { BodyPatch, CopyKind, StudioEvent, StudioState, StudioStatus } from './studio-state'
 import { escapeHtml, reasonOf } from './text'
+import { draftChanged, restoreDraft, type DraftStore } from './draft-store'
+import { useDraftPersistence, type DraftStatus } from './use-draft-persistence'
 
 const COPY_NOTICE_MS = 2000
 const NO_WARNINGS: readonly CompatWarning[] = []
@@ -47,6 +49,7 @@ interface ParseState {
 export interface StudioApi {
   readonly state: StudioState
   readonly status: StudioStatus
+  readonly draftStatus: DraftStatus
   readonly platforms: readonly PlatformDefinition[]
   readonly platform: PlatformDefinition
   readonly parsed: ParsedDocument | null
@@ -115,16 +118,24 @@ export function useStudio(ports: StudioPorts): StudioApi {
   // Commit in event order even before React renders: an immediate copy or typeset must see
   // the last confirmed composition/input; late work must never write to a newer source.
   const stateRef = useRef(state)
+  const ownedObjectUrls = useRef(new Map<string, Blob>())
+  const restore = useCallback((store: DraftStore) => {
+    if (!store.snapshot) return
+    const restored = restoreDraft(store.snapshot, stateRef.current, ownedObjectUrls.current)
+    stateRef.current = restored
+    setState(restored)
+  }, [])
+  const { status: draftStatus, save } = useDraftPersistence(restore)
   const dispatch = useCallback((event: StudioEvent) => {
     const previous = stateRef.current
     const next = studioReducer(previous, event)
     if (next === previous) return
     stateRef.current = next
     setState(next)
-  }, [])
+    if (draftChanged(previous, next)) save(next, ownedObjectUrls.current)
+  }, [save])
   const typesetTimer = useRef<number | null>(null)
   const noticeTimer = useRef<number | null>(null)
-  const ownedObjectUrls = useRef(new Set<string>())
   const importRequest = useRef(0)
   const copyRequest = useRef(0)
 
@@ -136,7 +147,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
       if (outcome.ok) retainedHtml.push(outcome.document.html)
     }
     // Old previews remain visible until replaced or explicitly discarded.
-    for (const url of ownedObjectUrls.current) {
+    for (const url of ownedObjectUrls.current.keys()) {
       if (bound.has(url) || retainedHtml.some((html) => html.includes(`src="${url}"`))) continue
       revokeObjectUrl(url)
       ownedObjectUrls.current.delete(url)
@@ -152,7 +163,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
       if (noticeTimer.current !== null) {
         window.clearTimeout(noticeTimer.current)
       }
-      for (const url of objectUrls) revokeObjectUrl(url)
+      for (const url of objectUrls.keys()) revokeObjectUrl(url)
       objectUrls.clear()
     }
   }, [])
@@ -392,7 +403,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
       return
     }
     const url = URL.createObjectURL(file)
-    ownedObjectUrls.current.add(url)
+    ownedObjectUrls.current.set(url, file)
     dispatch({ type: 'assets/bound', raw, url })
   }, [dispatch])
 
@@ -471,6 +482,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
   return {
     state,
     status: selectStatus(state),
+    draftStatus,
     platforms: PLATFORMS,
     platform,
     parsed: parsed.document,
