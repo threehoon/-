@@ -163,6 +163,8 @@ export interface PlatformDefinition {
 
 export interface TypesetRequest {
   readonly markdown: string
+  /** A platform draft already has a separate title; keep its body headings as content. */
+  readonly bodyOnly?: boolean
   readonly titleOverride: string | null
   readonly assets: AssetRegistry
   readonly platformTemplates?: Readonly<Partial<Record<PlatformId, WechatTemplateId>>>

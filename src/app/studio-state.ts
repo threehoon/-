@@ -63,6 +63,14 @@ export interface BodyPatch {
   readonly html: string
   readonly plainText: string
   readonly baseline: Pick<RenderedDocument, 'html' | 'warnings'>
+  /** Private body-only Markdown used to keep platform-degraded blocks portable on future edits. */
+  readonly linkedMarkdown?: string
+}
+
+export interface LiveLink {
+  readonly source: PlatformId
+  readonly targets: readonly PlatformId[]
+  readonly error: string | null
 }
 
 export interface StudioState {
@@ -89,6 +97,7 @@ export interface StudioState {
   readonly warningsExpanded: boolean
   readonly bodyPatches: Readonly<Partial<Record<PlatformId, BodyPatch>>>
   readonly boundAssets: Readonly<Record<string, string>>
+  readonly liveLink: LiveLink | null
 }
 
 export type StudioEvent =
@@ -171,12 +180,13 @@ export function createInitialState(init: StudioInit): StudioState {
     warningsExpanded: true,
     bodyPatches: {},
     boundAssets: {},
+    liveLink: null,
   }
 }
 
 /** 左侧原稿输入及其配图是排版输入，右侧排版结果的编辑不走这里。 */
 function withSourceChange(state: StudioState, patch: Partial<StudioState>): StudioState {
-  return { ...state, ...patch, revision: state.revision + 1, manualCopy: null, copyNotice: null }
+  return { ...state, ...patch, revision: state.revision + 1, liveLink: null, manualCopy: null, copyNotice: null }
 }
 
 export function studioReducer(state: StudioState, event: StudioEvent): StudioState {
@@ -214,7 +224,7 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
       const previous = state.bodyPatches[platform] ?? result.outcome.document
       if (previous.html === patch.html) return state
       const bodyPatches = { ...state.bodyPatches }
-      if (result.outcome.document.html === patch.html) delete bodyPatches[platform]
+      if (patch.linkedMarkdown === undefined && result.outcome.document.html === patch.html) delete bodyPatches[platform]
       else bodyPatches[platform] = patch
       return { ...state, bodyPatches, copyNotice: null, manualCopy: null }
     }
@@ -252,6 +262,7 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
         ...state,
         typesetting: true,
         pendingRevision: state.revision,
+        liveLink: null,
         typesetFailure: null,
         copyNotice: null,
         manualCopy: null,

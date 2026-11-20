@@ -89,7 +89,7 @@ export function SourcePanel({
       <div className="panel__body">
         <p className="field__hint source__import-hint">
           {sourceLocked
-            ? '原稿只读。右侧编辑只影响当前平台，不会改动这里。'
+            ? '原稿只读，不会被右侧成稿编辑或联动改动。'
             : '拖入 Markdown 或 TXT 文件，或把 Markdown 粘贴到下方。生成成稿后，原稿将保持只读。'}
         </p>
 

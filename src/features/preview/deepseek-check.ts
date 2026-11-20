@@ -27,9 +27,25 @@ const MAX_OUTPUT_BYTES = 128_000
 const MAX_ISSUES = 20
 const ADDRESS = /(?:https?:\/\/|mailto:|www\.)[^\s<>，。！？；：“”‘’（）【】《》]+/giu
 
+export function deepSeekPageAccess(): 'trusted' | 'lan-http' | 'blocked' {
+  if (globalThis.isSecureContext === true
+    && (location.protocol === 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname))) return 'trusted'
+  // Explicit exception for this workbench preview, never for other HTTP origins or embedded pages.
+  if (location.origin === 'http://192.168.0.101:4173' && window.top === window) return 'lan-http'
+  return 'blocked'
+}
+
+let lanDeepSeekEnabled = false
+
+export function enableLanDeepSeekForPage(): boolean {
+  if (deepSeekPageAccess() !== 'lan-http') return false
+  lanDeepSeekEnabled = true
+  return true
+}
+
 export function deepSeekPageAllowed(): boolean {
-  return globalThis.isSecureContext === true
-    && (location.protocol === 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname))
+  const access = deepSeekPageAccess()
+  return access === 'trusted' || (access === 'lan-http' && lanDeepSeekEnabled)
 }
 
 export function validDeepSeekKey(key: string): boolean {

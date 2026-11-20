@@ -115,7 +115,8 @@ function isSnapshot(value: unknown): value is DraftSnapshot {
   return text(state.markdown) && typeof state.sourceLocked === 'boolean' && platform(state.platform) &&
     number(state.revision) && platformRecord(state.titleOverrides, text) &&
     platformRecord(state.platformTemplates, (value) => WECHAT_TEMPLATES.some(({ id }) => id === value)) &&
-    platformRecord(state.bodyPatches, (value) => record(value) && html(value.html) && text(value.plainText) && baseline(value.baseline)) &&
+    platformRecord(state.bodyPatches, (value) => record(value) && html(value.html) && text(value.plainText) &&
+      baseline(value.baseline) && (value.linkedMarkdown === undefined || text(value.linkedMarkdown))) &&
     platformRecord(state.typesetBaselines, (value) => record(value) && number(value.revision) && text(value.markdown)) &&
     platformRecord(state.retainedDocuments, rendered) && record(state.boundAssets) &&
     Object.values(state.boundAssets).every((url) => text(url) && images.has(url)) &&

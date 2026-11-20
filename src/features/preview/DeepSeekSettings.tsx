@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEEPSEEK_API, DEEPSEEK_MODELS, deepSeekPageAllowed, requestDeepSeek, validDeepSeekKey, type DeepSeekConfig } from './deepseek-check'
+import { DEEPSEEK_API, DEEPSEEK_MODELS, deepSeekPageAccess, deepSeekPageAllowed, enableLanDeepSeekForPage, requestDeepSeek, validDeepSeekKey, type DeepSeekConfig } from './deepseek-check'
 import { saveRememberedDeepSeekConfig } from './deepseek-config-store'
 
 interface SettingsProps {
@@ -11,6 +11,9 @@ interface SettingsProps {
 
 export function DeepSeekSettings({ config, remembered, onSave, onClose }: SettingsProps) {
   const dialog = useRef<HTMLDialogElement>(null)
+  const keyInput = useRef<HTMLInputElement>(null)
+  const cancelButton = useRef<HTMLButtonElement>(null)
+  const lanUnlock = useRef<HTMLButtonElement>(null)
   const request = useRef<AbortController | null>(null)
   const [key, setKey] = useState(config?.key ?? '')
   const [model, setModel] = useState(config?.model ?? DEEPSEEK_MODELS[0])
@@ -19,12 +22,14 @@ export function DeepSeekSettings({ config, remembered, onSave, onClose }: Settin
   const [status, setStatus] = useState('')
   const [testing, setTesting] = useState(false)
   const [remember, setRemember] = useState(remembered)
+  const [allowed, setAllowed] = useState(deepSeekPageAllowed)
+  const access = deepSeekPageAccess()
+  const lanHttp = access === 'lan-http'
   const keyValid = validDeepSeekKey(key.trim())
-  const allowed = deepSeekPageAllowed()
 
   function applySettings(next: DeepSeekConfig | null) {
-    const persist = next !== null && remember
-    if (!saveRememberedDeepSeekConfig(persist ? next : null) && (persist || remembered)) {
+    const persist = access === 'trusted' && next !== null && remember
+    if (access === 'trusted' && !saveRememberedDeepSeekConfig(persist ? next : null) && (persist || remembered)) {
       setStatus(persist
         ? '浏览器未能保存配置。请允许站点存储后重试，或取消勾选记住配置。'
         : '浏览器未能清除保存的配置。请重试，或在浏览器设置中管理此站点的数据。')
@@ -43,6 +48,11 @@ export function DeepSeekSettings({ config, remembered, onSave, onClose }: Settin
       if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus({ preventScroll: true })
     }
   }, [])
+
+  useEffect(() => {
+    const focus = allowed ? keyInput.current : lanUnlock.current ?? cancelButton.current
+    focus?.focus({ preventScroll: true })
+  }, [allowed])
 
   async function testConnection() {
     if (!keyValid || !allowed || request.current) return
@@ -88,7 +98,7 @@ export function DeepSeekSettings({ config, remembered, onSave, onClose }: Settin
         </div>
         <div className="field">
           <label className="field__label" htmlFor="deepseek-model">模型</label>
-          <select className="field__input" id="deepseek-model" value={model} disabled={testing} onChange={(event) => {
+          <select className="field__input" id="deepseek-model" value={model} disabled={!allowed || testing} onChange={(event) => {
             const next = DEEPSEEK_MODELS.find((entry) => entry === event.currentTarget.value)
             if (next) {
               setModel(next)
@@ -101,26 +111,37 @@ export function DeepSeekSettings({ config, remembered, onSave, onClose }: Settin
         </div>
         <div className="field">
           <label className="field__label" htmlFor="deepseek-key">API Key</label>
-          <input className="field__input" id="deepseek-key" type="password" autoFocus autoComplete="off" spellCheck={false}
-            value={key} maxLength={256} disabled={!allowed || testing} aria-describedby="deepseek-key-help"
+          <input ref={keyInput} className="field__input" id="deepseek-key" type="password" autoComplete="off" spellCheck={false}
+            value={key} maxLength={256} disabled={!allowed || testing} aria-describedby={lanHttp || !allowed ? 'deepseek-key-security' : undefined}
             onChange={(event) => { setKey(event.currentTarget.value); invalidate() }} />
-          <p id="deepseek-key-help">没有 Key？<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">在 DeepSeek 开放平台创建</a>。</p>
+          {lanHttp ? (
+            <>
+              <p id="deepseek-key-security"><strong>局域网 HTTP 不加密。</strong>页面可能被篡改并窃取密钥。请只在信任的网络使用；密钥仅在当前页面使用，不会保存。</p>
+              {!allowed && <button ref={lanUnlock} className="btn btn--secondary" type="button" aria-describedby="deepseek-key-security"
+                onClick={() => { if (enableLanDeepSeekForPage()) setAllowed(true) }}>了解风险，临时允许输入</button>}
+            </>
+          ) : !allowed && <p id="deepseek-key-security">当前连接不安全，不能输入密钥。请用工作台的 HTTPS 地址；在运行工作台的电脑上，也可用 localhost 打开。</p>}
+          <p>
+            没有 Key？<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">在 DeepSeek 开放平台创建</a>。<a href="https://platform.deepseek.com/top_up" target="_blank" rel="noreferrer">DeepSeek API 充值</a>。
+          </p>
         </div>
         <label className="ai-settings__consent">
           <input type="checkbox" checked={consent} disabled={!allowed || testing}
             onChange={(event) => setConsent(event.currentTarget.checked)} />
           <span>我同意仅在点击「AI 检查内容」时，将当前平台标题和正文纯文本发送给 DeepSeek。不发送图片、附件或原始 Markdown。</span>
         </label>
-        <label className="ai-settings__consent">
-          <input type="checkbox" checked={remember} disabled={!allowed || testing} aria-describedby="deepseek-remember-help"
-            onChange={(event) => { setRemember(event.currentTarget.checked); setStatus('') }} />
-          <span>在此浏览器记住配置</span>
-        </label>
-        <p id="deepseek-remember-help">勾选后，Key 和模型会保存在此站点的浏览器数据中，重开不用填写。Key 不加密，请勿在共用设备上勾选。</p>
-        <p className="ai-settings__status" role="status">{allowed ? status : '当前网页不是安全页面。请用 HTTPS 或本机地址打开后再配置。'}</p>
+        {!lanHttp && <>
+          <label className="ai-settings__consent">
+            <input type="checkbox" checked={remember} disabled={!allowed || testing} aria-describedby="deepseek-remember-help"
+              onChange={(event) => { setRemember(event.currentTarget.checked); setStatus('') }} />
+            <span>在此浏览器记住配置</span>
+          </label>
+          <p id="deepseek-remember-help">勾选后，Key 和模型会保存在此站点的浏览器数据中，重开不用填写。Key 不加密，请勿在共用设备上勾选。</p>
+        </>}
+        <p className="ai-settings__status" role="status">{status}</p>
         <div className="ai-settings__actions">
           {config ? <button className="btn btn--ghost" type="button" onClick={() => applySettings(null)}>清除配置</button> : null}
-          <button className="btn btn--ghost" type="button" onClick={onClose}>取消</button>
+          <button ref={cancelButton} className="btn btn--ghost" type="button" onClick={onClose}>取消</button>
           <button className="btn btn--secondary" type="button" disabled={!allowed || !keyValid || testing}
             onClick={() => { void testConnection() }}>测试连接</button>
           <button className="btn btn--primary" type="submit" disabled={!allowed || !keyValid || !tested || !consent || testing}>启用 DeepSeek</button>

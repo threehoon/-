@@ -57,8 +57,9 @@ function delimiters(element: HTMLElement, preserve: boolean): string[] {
   if (formats.has('delete')) markers.push('~~')
   if (formats.has('emphasis')) markers.push('*')
   if (formats.has('strong')) markers.push('**')
-  if (preserve && element.getAttribute(FORMAT_SOURCE_ATTR) === 'underline') markers.push('++')
-  if (preserve && element.getAttribute(FORMAT_SOURCE_ATTR) === 'highlight') markers.push('==')
+  const sourceFormat = element.getAttribute(FORMAT_SOURCE_ATTR)
+  if (preserve && (sourceFormat === 'underline' || element.localName === 'u' || element.style.textDecoration.includes('underline'))) markers.push('++')
+  if (preserve && (sourceFormat === 'highlight' || element.localName === 'mark' || (element.localName === 'span' && element.style.backgroundColor !== ''))) markers.push('==')
   return markers
 }
 
@@ -97,7 +98,11 @@ export interface EditSerializer {
   readonly serialize: (nodes: readonly Node[]) => string
 }
 
-/** Serialize only ranges already identified by the renderer; never replace the full source from HTML. */
+export function isLinkedInlineImage(src: string): boolean {
+  return /^data:image\/(?:png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/]+=*$/i.test(src)
+}
+
+/** Serialize edited ranges; unchanged Markdown is recovered separately from its source markers. */
 export function createEditSerializer(baseline: DocumentFragment, assets: Readonly<Record<string, string>>): EditSerializer {
   const boundPaths = new Map(Object.entries(assets)
     .filter(([path]) => path !== '' && !/^[\p{L}\d+.-]+:|^\/\//u.test(compactUrl(path)))
@@ -112,6 +117,8 @@ export function createEditSerializer(baseline: DocumentFragment, assets: Readonl
     let path: string
     if (original && originalImages.get(original) === src && !LOCAL_URL.test(compactUrl(original))) {
       path = original
+    } else if (isLinkedInlineImage(src)) {
+      path = src
     } else if (LOCAL_URL.test(compactUrl(src))) {
       const bound = boundPaths.get(src)
       if (!bound) throw new Error('有图片未与本地路径配对，请重新插入图片或撤销该修改。')

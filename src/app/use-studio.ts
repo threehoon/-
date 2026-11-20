@@ -37,6 +37,7 @@ import type { BodyPatch, CopyKind, StudioEvent, StudioState, StudioStatus } from
 import { escapeHtml, reasonOf } from './text'
 import { draftChanged, restoreDraft, type DraftStore } from './draft-store'
 import { useDraftPersistence, type DraftStatus } from './use-draft-persistence'
+import { configureLiveLink, followLiveLink } from './live-link'
 
 const COPY_NOTICE_MS = 2000
 const NO_WARNINGS: readonly CompatWarning[] = []
@@ -75,6 +76,7 @@ export interface StudioApi {
   readonly hasPlatformEdits: boolean
   readonly patchBlockReason: string | null
   readonly discardPatch: () => void
+  readonly setLiveLinkTargets: (targets: readonly PlatformId[]) => string | null
   readonly runTypeset: () => void
   readonly importFiles: (files: readonly File[]) => Promise<void>
   readonly copy: (kind: CopyKind, previewWarnings: readonly CompatWarning[], focused: boolean) => Promise<void>
@@ -126,14 +128,26 @@ export function useStudio(ports: StudioPorts): StudioApi {
     setState(restored)
   }, [])
   const { status: draftStatus, save } = useDraftPersistence(restore)
-  const dispatch = useCallback((event: StudioEvent) => {
-    const previous = stateRef.current
-    const next = studioReducer(previous, event)
+  const commit = useCallback((next: StudioState, previous: StudioState) => {
     if (next === previous) return
     stateRef.current = next
     setState(next)
     if (draftChanged(previous, next)) save(next, ownedObjectUrls.current)
   }, [save])
+  const dispatch = useCallback((event: StudioEvent) => {
+    const previous = stateRef.current
+    const next = studioReducer(previous, event)
+    if (next !== previous) commit(followLiveLink(next, event, ports), previous)
+  }, [commit, ports])
+  const setLiveLinkTargets = useCallback((targets: readonly PlatformId[]): string | null => {
+    const snapshot = stateRef.current
+    try {
+      commit(configureLiveLink(snapshot, targets, ports), snapshot)
+      return null
+    } catch (error) {
+      return `未更新联动，目标平台草稿保持原样。${reasonOf(error)}`
+    }
+  }, [commit, ports])
   const typesetTimer = useRef<number | null>(null)
   const noticeTimer = useRef<number | null>(null)
   const importRequest = useRef(0)
@@ -268,10 +282,9 @@ export function useStudio(ports: StudioPorts): StudioApi {
     // Delayed image reads must not install an edit into a replaced or discarded editor.
     if (!snapshot.report || snapshot.report !== state.report || snapshot.generation !== state.generation ||
       snapshot.platform !== state.platform || !originalDocument || selectPatchBlockReason(snapshot)) return
-    const baseline = snapshot.bodyPatches[snapshot.platform]?.baseline ?? {
-      html: originalDocument.html, warnings: originalDocument.warnings,
-    }
-    const patch: BodyPatch = { html: html === normalizedOriginalHtml ? originalDocument.html : html, plainText, baseline }
+    const previous = snapshot.bodyPatches[snapshot.platform]
+    const baseline = previous?.baseline ?? { html: originalDocument.html, warnings: originalDocument.warnings }
+    const patch: BodyPatch = { ...previous, html: html === normalizedOriginalHtml ? originalDocument.html : html, plainText, baseline }
     dispatch({
       type: 'body/edited', platform: snapshot.platform, report: snapshot.report,
       revision: snapshot.revision, generation: snapshot.generation, patch,
@@ -427,7 +440,8 @@ export function useStudio(ports: StudioPorts): StudioApi {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       // Some Chromium IME confirmation keydowns report 229 before isComposing flips.
-      if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return
+      if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || event.key !== 'Enter' || !(event.metaKey || event.ctrlKey) ||
+        window.document.querySelector('dialog[open]')) return
       event.preventDefault()
       runTypeset()
     }
@@ -508,6 +522,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
     hasPlatformEdits: hasPlatformEdits(state),
     patchBlockReason: selectPatchBlockReason(state),
     discardPatch,
+    setLiveLinkTargets,
     runTypeset,
     importFiles,
     copy,

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { DEFAULT_ARTICLE_FONT } from '@/core/render/article-font'
 import type {
   CompatWarning,
@@ -20,6 +20,58 @@ import { CompatibilityList, type CompatibilityListProps, type LocateFeedback } f
 import { compatibilityTargets, locateRange } from './issue-locations'
 
 const NO_WARNINGS: readonly CompatWarning[] = []
+const FOCUS_CANVAS_KEY = 'typeset-studio:focus-canvas'
+const FOCUS_CANVAS_CONTROLS = [
+  { label: '画布宽度', min: 320, max: 1200, step: 20, unit: 'px' },
+  { label: '画布高度', min: 50, max: 100, step: 5, unit: '%' },
+  { label: '正文显示比例', min: 75, max: 125, step: 5, unit: '%' },
+] as const
+const DEFAULT_FOCUS_CANVAS = [920, 100, 100] as const
+
+type FocusCanvasSize = readonly [width: number, height: number, zoom: number]
+
+function loadFocusCanvas(): FocusCanvasSize {
+  try {
+    const stored = window.localStorage.getItem(FOCUS_CANVAS_KEY)?.split(',').map(Number)
+    if (stored?.length === 3 && FOCUS_CANVAS_CONTROLS.every(({ min, max, step }, index) => {
+      const value = stored[index]
+      return value >= min && value <= max && Number.isInteger((value - min) / step)
+    })) return [stored[0], stored[1], stored[2]]
+  } catch {
+    // Storage is optional; the view remains adjustable on this page.
+  }
+  return DEFAULT_FOCUS_CANVAS
+}
+
+function FocusCanvasControl({ size, onChange }: { readonly size: FocusCanvasSize; readonly onChange: (size: FocusCanvasSize) => void }) {
+  const id = useId()
+  return (
+    <>
+      <button className="btn btn--ghost btn--small focus-canvas-trigger" type="button" popoverTarget={id}>
+        画布大小 <Icon name="chevron" size={14} />
+      </button>
+      <section id={id} className="focus-canvas-controls" popover="auto" aria-labelledby={`${id}-heading`}>
+        <h2 id={`${id}-heading`}>调整画布</h2>
+        {FOCUS_CANVAS_CONTROLS.map(({ label, min, max, step, unit }, index) => (
+          <label className="focus-canvas-controls__field" key={label}>
+            <span>{label}</span>
+            <span className="focus-canvas-controls__value" aria-hidden="true">{size[index]}{unit === '%' ? unit : ` ${unit}`}</span>
+            <input type="range" aria-label={label} aria-valuetext={`${size[index]}${unit === '%' ? '%' : ' 像素'}`}
+              min={min} max={max} step={step} value={size[index]} onChange={(event) => {
+                const next: [number, number, number] = [...size]
+                next[index] = event.currentTarget.valueAsNumber
+                onChange(next)
+              }} />
+          </label>
+        ))}
+        <div className="focus-canvas-controls__footer">
+          <p>只改变编辑视图，不影响复制和发布。</p>
+          <button className="btn btn--secondary btn--small" type="button" onClick={() => onChange(DEFAULT_FOCUS_CANVAS)}>恢复默认</button>
+        </div>
+      </section>
+    </>
+  )
+}
 
 export interface PreviewPanelProps {
   readonly platform: PlatformDefinition
@@ -94,6 +146,23 @@ export function PreviewPanel({
   const canvas = useRef<HTMLDivElement>(null)
   const [aiLocatorHost, setAiLocatorHost] = useState<HTMLDivElement | null>(null)
   const [checkReset, setCheckReset] = useState(0)
+  const [focusCanvas, setFocusCanvas] = useState(loadFocusCanvas)
+  const [focusWidth, focusHeight, focusZoom] = focusCanvas
+  const focusStyle = focused ? {
+    '--focus-canvas-width': `${focusWidth}px`,
+    '--focus-canvas-height': focusHeight / 100,
+    '--focus-canvas-zoom': focusZoom / 100,
+  } as CSSProperties : undefined
+
+  function changeFocusCanvas(next: FocusCanvasSize) {
+    setFocusCanvas(next)
+    try {
+      window.localStorage.setItem(FOCUS_CANVAS_KEY, next.join(','))
+    } catch {
+      // The current page can still use the chosen size without local storage.
+    }
+  }
+
   const canCheck = status === 'typeset' && failure === null && typesetFailureReason === null
 
   function locateCompatibility(warning: CompatWarning): LocateFeedback {
@@ -141,7 +210,7 @@ export function PreviewPanel({
             />
           </div>
         ) : null}
-        <section className="preview" aria-label={`${platform.name}预览`}>
+        <section className="preview" style={focusStyle} aria-label={`${platform.name}预览`}>
           <div className="preview__notices">
             {isStale && report?.typesetAt ? (
               <p className="preview-banner" data-tone="quiet">
@@ -307,6 +376,7 @@ export function PreviewPanel({
       }}
       focused={focused}
       onFocusChange={onFocusChange}
+      focusCanvasControl={focused ? <FocusCanvasControl size={focusCanvas} onChange={changeFocusCanvas} /> : null}
       renderLayout={renderLayout}
     />
   )

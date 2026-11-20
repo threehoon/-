@@ -11,7 +11,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:draft-browser": "node scripts/verify-draft-persistence.mjs",
+    "test:editor-browser": "node scripts/verify-editor-experience.mjs",
     "test:check-browser": "node scripts/verify-draft-check.mjs",
+    "test:live-link-browser": "node scripts/verify-live-link.mjs",
     "test:watch": "vitest",
     "preview": "vite preview --port 4173 --strictPort"
   },

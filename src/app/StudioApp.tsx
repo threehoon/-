@@ -6,6 +6,7 @@ import { selectActiveTemplate, selectPlatformResult, selectTemplateEditConflict 
 import { formatClock } from '@/app/text'
 import { Icon } from '@/components/Icon'
 import { CopyActions } from '@/features/actions/CopyActions'
+import { LiveLinkControl } from '@/features/actions/LiveLinkControl'
 import { PlatformTabs } from '@/features/preview/PlatformTabs'
 import { WechatTemplatePicker } from '@/features/preview/WechatTemplatePicker'
 import { platformTabId } from '@/features/preview/panel-ids'
@@ -149,7 +150,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
 
   function locateSource(location: CompatibilityLocation): boolean {
     const baselineMarkdown = state.typesetBaselines[platform.id]?.markdown
-    if (baselineMarkdown === undefined) return false
+    if (baselineMarkdown === undefined || state.bodyPatches[platform.id]?.linkedMarkdown !== undefined) return false
     const span = currentSourceSpan(location, baselineMarkdown, state.markdown)
     const field = document.querySelector<HTMLTextAreaElement>('#source-markdown')
     if (!span || !field) return false
@@ -295,6 +296,12 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
                       onSelect={api.selectTemplate}
                     />
                   ) : null}
+                  linkAction={state.liveLink || (api.patchBlockReason === null && api.succeededPlatforms.length > 1) ? (
+                    <LiveLinkControl key={`${platform.id}:${state.generation}`} platform={platform} platforms={api.platforms}
+                      available={api.succeededPlatforms} link={state.liveLink} onSave={api.setLiveLinkTargets} />
+                  ) : null}
+                  linkError={state.liveLink && (state.liveLink.source === platform.id || state.liveLink.targets.includes(platform.id))
+                    ? state.liveLink.error : null}
                   focused={focused}
                   draftStatus={focused ? draftNotice : undefined}
                   platform={platform}
@@ -317,6 +324,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
                   platform={platform}
                   status={api.status}
                   result={api.publishReview}
+                  compact={focused}
                   failed={api.failure !== null || state.typesetFailure !== null}
                 />
               )}

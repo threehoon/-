@@ -44,6 +44,17 @@ describe('remembered DeepSeek configuration', () => {
     expect(window.localStorage.getItem(DEEPSEEK_STORAGE_KEY)).not.toBeNull()
   })
 
+  it('does not access persistent storage on the explicit LAN HTTP exception', () => {
+    vi.stubGlobal('isSecureContext', false)
+    vi.stubGlobal('location', new URL('http://192.168.0.101:4173/'))
+    const read = vi.spyOn(storage, 'getItem')
+    const write = vi.spyOn(storage, 'setItem')
+    expect(loadRememberedDeepSeekConfig()).toBeNull()
+    expect(saveRememberedDeepSeekConfig(config)).toBe(false)
+    expect(read).not.toHaveBeenCalled()
+    expect(write).not.toHaveBeenCalled()
+  })
+
   it('does not prevent startup if site storage cannot be read', () => {
     vi.spyOn(storage, 'getItem').mockImplementationOnce(() => { throw new DOMException('Blocked', 'SecurityError') })
     expect(loadRememberedDeepSeekConfig()).toBeNull()

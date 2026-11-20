@@ -10,7 +10,7 @@ import type { StudioPorts } from './ports'
  */
 export const corePorts: StudioPorts = {
   parse: (markdown) => parseDocument(markdown),
-  typeset: (input, onlyPlatform) => typeset(input, onlyPlatform ? { platforms: [onlyPlatform] } : undefined),
+  typeset: (input, selection) => typeset(input, selection && { platforms: 'id' in selection ? [selection] : selection }),
   createAssets: (entries) => createAssetRegistry(entries),
   copyRichText: (payload) => copyRichText(payload),
   collectImages: (parsed) => collectImageSources(parsed),

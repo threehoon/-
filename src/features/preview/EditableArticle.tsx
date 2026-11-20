@@ -45,6 +45,7 @@ interface ArticleProps {
   readonly onDiscard?: () => void
   readonly focused: boolean
   readonly onFocusChange?: (enabled: boolean) => void
+  readonly focusCanvasControl?: ReactNode
   readonly renderLayout: (parts: ArticleLayout) => ReactNode
 }
 
@@ -141,7 +142,7 @@ function restoreReadingPosition(article: HTMLElement, position: LayoutPosition) 
   else if (position.top >= 0 && change !== 0) article.ownerDocument.defaultView?.scrollBy(0, change)
 }
 
-export function EditableArticle({ document, template, onEdit, onImageError, hasPlatformEdits, onDiscard, focused, onFocusChange, renderLayout }: ArticleProps) {
+export function EditableArticle({ document, template, onEdit, onImageError, hasPlatformEdits, onDiscard, focused, onFocusChange, focusCanvasControl, renderLayout }: ArticleProps) {
   const [editSession, setEditSession] = useState<{ html: string; template: ArticleProps['template'] } | null>(null)
   const [isComposing, setIsComposing] = useState(false)
   const [reading, setReading] = useState(false)
@@ -518,9 +519,10 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
       {editing ? (
         <div className="article-edit__guide">
           <p className="article-edit__hint" id="article-edit-hint">
-            {!hasPlatformEdits ? '编辑仅影响当前平台。' : null}选中文字可改字体和字号，也可拖入单张图片。
+            {!hasPlatformEdits ? '未开启联动时，编辑仅影响当前平台。' : null}选中文字可改字体和字号，也可拖入单张图片。
           </p>
           <div className="content-check__actions">
+            {focusCanvasControl}
             <button type="submit" form={ARTICLE_CHECK_FORM_ID} className="btn btn--ghost btn--small">AI 检查内容</button>
             <button type="submit" form={ARTICLE_CHECK_FORM_ID} value="local" className="btn btn--ghost btn--small">本地比对</button>
           </div>
@@ -528,7 +530,7 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
       ) : null}
       {hasPlatformEdits ? (
         <div className="article-edit__guide">
-          <p className="article-edit__hint" id="article-patch-status" role="status">改动仅保留在当前平台，左侧原稿不变。</p>
+          <p className="article-edit__hint" id="article-patch-status" role="status">已修改成稿，左侧原稿不变。</p>
           <button type="button" className="btn btn--ghost btn--small" disabled={!onDiscard || reading}
             aria-describedby="article-patch-status" onClick={onDiscard}>撤销右侧改动</button>
         </div>

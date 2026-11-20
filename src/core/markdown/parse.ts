@@ -90,15 +90,15 @@ function computeStats(root: Root): DocumentStats {
  * frontmatter 解析失败不会抛错，此时 `frontmatter` 为 null。界面若想提示原因，
  * 可以直接调用 `readFrontmatter(markdown).error`——它是独立的只读函数，不污染契约类型。
  */
-export function parseDocument(markdown: string): ParsedDocument {
+export function parseDocument(markdown: string, bodyOnly = false): ParsedDocument {
   if (typeof markdown !== 'string') {
     throw new TypeError('源稿必须是 Markdown 文本')
   }
 
-  const { data, body } = readFrontmatter(markdown.replace(/^\uFEFF/, ''))
+  const { data, body } = bodyOnly ? { data: null, body: markdown } : readFrontmatter(markdown.replace(/^\uFEFF/, ''))
   const root = processor.parse(body)
   applyInlineFormats(root, body)
-  const title = extractTitle(root, data)
+  const title = bodyOnly ? { value: null, from: 'none' as const } : extractTitle(root, data)
   const leadingTitleIndex = findLeadingTitleIndex(root, title)
   const bodyRoot = removeBlockAt(root, leadingTitleIndex)
   const bodyOffset = markdown.length - body.length

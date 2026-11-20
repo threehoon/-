@@ -61,6 +61,8 @@ export interface CopyActionsProps {
   readonly editAction?: ReactNode
   readonly focusAction?: ReactNode
   readonly templateAction?: ReactNode
+  readonly linkAction?: ReactNode
+  readonly linkError?: string | null
   readonly focused?: boolean
   readonly draftStatus?: ReactNode
   readonly onDismissManual: () => void
@@ -77,6 +79,8 @@ export function CopyActions({
   editAction,
   focusAction,
   templateAction,
+  linkAction,
+  linkError,
   focused = false,
   draftStatus,
   onDismissManual,
@@ -115,6 +119,7 @@ export function CopyActions({
         {focused ? null : editAction}
         {focusAction}
         {templateAction}
+        {linkAction}
         <a
           hidden={focused}
           className="btn btn--ghost"
@@ -130,6 +135,8 @@ export function CopyActions({
         </a>
         {focused ? null : <PublishLinks />}
       </div>
+
+      {linkError ? <p className="live-link-note" role="alert">{linkError}</p> : null}
 
       <p className="copy-status" role="status" aria-live="polite">
         {copyNotice?.message ?? ''}

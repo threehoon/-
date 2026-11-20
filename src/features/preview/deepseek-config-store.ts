@@ -1,9 +1,9 @@
-import { DEEPSEEK_MODELS, deepSeekPageAllowed, validDeepSeekKey, type DeepSeekConfig } from './deepseek-check'
+import { DEEPSEEK_MODELS, deepSeekPageAccess, validDeepSeekKey, type DeepSeekConfig } from './deepseek-check'
 
 export const DEEPSEEK_STORAGE_KEY = 'typeset-studio:deepseek-config:v1'
 
 export function loadRememberedDeepSeekConfig(): DeepSeekConfig | null {
-  if (!deepSeekPageAllowed()) return null
+  if (deepSeekPageAccess() !== 'trusted') return null
   try {
     const raw = window.localStorage.getItem(DEEPSEEK_STORAGE_KEY)
     if (!raw || raw.length > 1024) return null
@@ -17,7 +17,7 @@ export function loadRememberedDeepSeekConfig(): DeepSeekConfig | null {
 }
 
 export function saveRememberedDeepSeekConfig(config: DeepSeekConfig | null): boolean {
-  if (!deepSeekPageAllowed()) return false
+  if (deepSeekPageAccess() !== 'trusted') return false
   try {
     if (config) window.localStorage.setItem(DEEPSEEK_STORAGE_KEY, JSON.stringify(config))
     else window.localStorage.removeItem(DEEPSEEK_STORAGE_KEY)

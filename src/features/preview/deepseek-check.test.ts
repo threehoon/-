@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEEPSEEK_API, checkBlocks, requestDeepSeek } from './deepseek-check'
+import { DEEPSEEK_API, checkBlocks, deepSeekPageAccess, enableLanDeepSeekForPage, requestDeepSeek } from './deepseek-check'
 import { articleTextUnits, rangeOf } from './content-check'
 import { aiTarget, matchDeepSeekIssues, rebaseAiAnchors, sameCheckText } from './deepseek-findings'
 
@@ -38,6 +38,26 @@ describe('DeepSeek 官方 API', () => {
     vi.stubGlobal('fetch', fetchApi)
     await expect(requestDeepSeek(config, blocks, signal())).rejects.toThrow('HTTPS')
     expect(fetchApi).not.toHaveBeenCalled()
+  })
+
+  it.each(['http://192.168.0.101:4174/', 'http://192.168.0.102:4173/', 'http://example.test/'])('非指定 HTTP 地址 %s 无法解锁', (url) => {
+    vi.stubGlobal('isSecureContext', false)
+    vi.stubGlobal('location', new URL(url))
+    expect(deepSeekPageAccess()).toBe('blocked')
+    expect(enableLanDeepSeekForPage()).toBe(false)
+  })
+
+  it('指定 HTTP 地址的请求必须经过本页解锁，解锁后仍只连接官方 HTTPS 接口', async () => {
+    vi.stubGlobal('isSecureContext', false)
+    vi.stubGlobal('location', new URL('http://192.168.0.101:4173/'))
+    const fetchApi = vi.fn<typeof fetch>().mockResolvedValue(reply('{"issues":[]}'))
+    vi.stubGlobal('fetch', fetchApi)
+    expect(deepSeekPageAccess()).toBe('lan-http')
+    await expect(requestDeepSeek(config, null, signal())).rejects.toThrow('HTTPS')
+    expect(fetchApi).not.toHaveBeenCalled()
+    expect(enableLanDeepSeekForPage()).toBe(true)
+    await expect(requestDeepSeek(config, null, signal())).resolves.toEqual([])
+    expect(fetchApi).toHaveBeenCalledExactlyOnceWith(DEEPSEEK_API, expect.objectContaining({ method: 'POST' }))
   })
 
   it('拒绝超长稿件而不是截断发送', async () => {

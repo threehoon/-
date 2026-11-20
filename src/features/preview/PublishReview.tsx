@@ -13,6 +13,7 @@ interface PublishReviewProps {
   readonly status: StudioStatus
   readonly result: PublishReviewResult | null
   readonly failed: boolean
+  readonly compact?: boolean
 }
 
 /**
@@ -57,7 +58,7 @@ function findingKey(finding: PublishFinding): string {
   return `${finding.rule}-${finding.location}-${finding.start}`
 }
 
-export function PublishReview({ platform, status, result, failed }: PublishReviewProps) {
+export function PublishReview({ platform, status, result, failed, compact = false }: PublishReviewProps) {
   const policy = getPublishPolicy(platform.id)
   const panel = useRef<HTMLElement>(null)
   // 手动折叠只对当前这份结果有效：结果一变（改稿、重检、换风险）就作废，回到默认展开。
@@ -88,7 +89,7 @@ export function PublishReview({ platform, status, result, failed }: PublishRevie
   }
   const previousTarget = status === 'typeset' && result !== null && lastLocated !== null && !findings.some((item) =>
     findingKey(item) === findingKey(lastLocated.finding) && item.context === lastLocated.finding.context) ? lastLocated : null
-  const open = manualOpen ?? (needsAttention || activeScan !== null || previousTarget !== null)
+  const open = manualOpen ?? ((!compact && needsAttention) || activeScan !== null || previousTarget !== null)
   const feedbackFor = feedback !== null && feedback.signature === signature ? feedback : null
   const blockReason = (() => {
     if (status === 'stale') return '源稿已更新，当前是上一版成稿；重新排版后再检测。'

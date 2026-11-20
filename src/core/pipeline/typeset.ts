@@ -51,7 +51,7 @@ export function typeset(request: TypesetRequest, options: TypesetOptions = {}): 
 
   let parsed: ParsedDocument
   try {
-    parsed = parseDocument(request.markdown)
+    parsed = parseDocument(request.markdown, request.bodyOnly)
   } catch (error) {
     return {
       title: null,

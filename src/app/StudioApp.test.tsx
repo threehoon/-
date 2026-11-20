@@ -562,7 +562,7 @@ describe('工作台整页流程', () => {
     try {
       act(() => templateChoice('清爽留白').click())
       expect(render).toHaveBeenCalledOnce()
-      expect(render.mock.calls[0]?.[1]?.id).toBe(index === 0 ? 'wechat' : 'toutiao')
+      expect(render.mock.calls[0]?.[1]).toMatchObject({ id: index === 0 ? 'wechat' : 'toutiao' })
       expect(queryText('.status-chip')).toBe(timestamp)
       expect(container.querySelector('.article h2')?.getAttribute('style')).not.toBe(classic)
       expect(container.querySelector<HTMLTextAreaElement>('#source-markdown')?.value).toBe(markdown)
@@ -604,7 +604,7 @@ describe('工作台整页流程', () => {
         expect(templateChoice('杂志长文').disabled).toBe(false)
         act(() => templateChoice('杂志长文').click())
         expect(render).toHaveBeenCalledOnce()
-        expect(render.mock.calls[0]?.[1]?.id).toBe(platform)
+        expect(render.mock.calls[0]?.[1]).toMatchObject({ id: platform })
         expect(container.querySelector('.article h2')?.getAttribute('style')).not.toBe(headingStyle)
         expect(container.querySelector('.article')?.getAttribute('contenteditable')).toBe('true')
         expect(titleField().value).toBe('专属标题')

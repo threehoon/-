@@ -28,13 +28,150 @@ export async function verifyDraftCheck({ browser, target, png }) {
       try {
         await route.fulfill({
           status: kind === 'error' ? 429 : 200,
-          headers: { 'access-control-allow-origin': target.origin },
+          headers: { 'access-control-allow-origin': request.headers().origin ?? target.origin },
           json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ issues: kind === 'empty' ? [] : issues }) } }] },
         })
       } catch (error) {
         if (kind !== 'slow') throw error
       }
     })
+    const officialLinks = [
+      ['在 DeepSeek 开放平台创建', 'https://platform.deepseek.com/api_keys'],
+      ['DeepSeek API 充值', 'https://platform.deepseek.com/top_up'],
+    ]
+    const verifyOfficialLinks = async (modal) => {
+      for (const [name, href] of officialLinks) {
+        const link = modal.getByRole('link', { name, exact: true })
+        await link.waitFor()
+        assert.equal(await link.getAttribute('href'), href)
+        assert.equal(await link.getAttribute('target'), '_blank')
+        assert.match(await link.getAttribute('rel'), /\bnoreferrer\b/u)
+      }
+    }
+    await context.route(/^https:\/\/platform\.deepseek\.com\/(api_keys|top_up)$/u, async (route) => {
+      assert.equal(await route.request().headerValue('referer'), null)
+      await route.fulfill({ contentType: 'text/html', body: '<title>DeepSeek 官方链接测试</title>' })
+    })
+    // Compare the same assets under non-loopback HTTP and HTTPS browser origins.
+    // A built preview can be supplied separately from the full localhost workflow.
+    const deploymentSource = new URL(process.env.AI_DEPLOYMENT_SOURCE_URL ?? target.href)
+    const serveDeploymentAssets = async (route) => {
+      const { pathname, search } = new URL(route.request().url())
+      await route.fulfill({ response: await context.request.get(new URL(pathname + search, deploymentSource).href) })
+    }
+    const openDeploymentSettings = async (page, origin, secure) => {
+      await page.route(`${origin}/**`, deploymentSource.origin === origin ? (route) => route.continue() : serveDeploymentAssets)
+      await page.goto(new URL(deploymentSource.pathname, origin).href)
+      assert.equal(await page.evaluate(() => window.isSecureContext), secure)
+      const settingsButton = page.getByRole('button', { name: 'AI 设置', exact: true })
+      await settingsButton.click()
+      const modal = page.getByRole('dialog', { name: 'DeepSeek 校对设置' })
+      return { settingsButton, modal, keyField: modal.getByLabel('API Key', { exact: true }) }
+    }
+    for (const protocol of ['http', 'https']) {
+      const origin = `${protocol}://workbench.test`
+      const secure = protocol === 'https'
+      const deployed = await context.newPage()
+      deployed.setDefaultTimeout(5000)
+      try {
+        const { settingsButton, modal, keyField } = await openDeploymentSettings(deployed, origin, secure)
+        const testButton = modal.getByRole('button', { name: '测试连接' })
+        assert.equal(await modal.getByLabel('API 地址（固定）', { exact: true }).inputValue(), endpoint)
+        assert.equal(await keyField.isDisabled(), !secure)
+        assert.equal(await testButton.isDisabled(), true)
+        assert.equal(await modal.getByRole('button', { name: '启用 DeepSeek' }).isDisabled(), true)
+        await verifyOfficialLinks(modal)
+        if (secure) {
+          assert.equal(await keyField.evaluate((el) => document.activeElement === el), true)
+          if (process.env.AI_SCREENSHOT_DIR) await deployed.screenshot({ path: `${process.env.AI_SCREENSHOT_DIR}/deepseek-settings-https.png` })
+          await deployed.keyboard.type('abc123')
+          assert.equal(await keyField.inputValue(), 'abc123')
+          await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
+          await deployed.evaluate(() => navigator.clipboard.writeText('browser-test-only'))
+          await deployed.keyboard.press('ControlOrMeta+A')
+          await deployed.keyboard.press('ControlOrMeta+V')
+          assert.equal(await keyField.inputValue(), 'browser-test-only')
+          assert.equal(await testButton.isEnabled(), true)
+        } else {
+          await modal.getByText(/当前连接不安全.*HTTPS.*localhost/u).waitFor()
+          assert.equal(await modal.getByRole('button', { name: '取消' }).evaluate((el) => document.activeElement === el), true)
+          if (process.env.AI_SCREENSHOT_DIR) await deployed.screenshot({ path: `${process.env.AI_SCREENSHOT_DIR}/deepseek-settings-insecure.png` })
+          for (const [name, href] of officialLinks) {
+            const popupOpened = deployed.waitForEvent('popup')
+            await modal.getByRole('link', { name, exact: true }).press('Enter')
+            const popup = await popupOpened
+            try {
+              assert.equal(popup.url(), href)
+              assert.equal(await popup.evaluate(() => window.opener === null), true)
+            } finally {
+              await popup.close()
+            }
+          }
+          assert.equal(await settingsButton.isVisible(), true)
+          assert.equal(await modal.isVisible(), true)
+        }
+        assert.equal(requests.length, 0, '打开外链、输入和粘贴均不触发 API 请求')
+        await deployed.keyboard.press('Escape')
+        await modal.waitFor({ state: 'hidden' })
+        assert.equal(await settingsButton.evaluate((el) => document.activeElement === el), true)
+      } finally {
+        await deployed.close()
+      }
+    }
+
+    const lanOrigin = 'http://192.168.0.101:4173'
+    const lan = await context.newPage()
+    lan.setDefaultTimeout(5000)
+    const clipboardPage = await context.newPage()
+    try {
+      const { settingsButton: settings, modal, keyField: key } = await openDeploymentSettings(lan, lanOrigin, false)
+      const unlock = modal.getByRole('button', { name: '了解风险，临时允许输入' })
+      const test = modal.getByRole('button', { name: '测试连接' })
+      const apply = modal.getByRole('button', { name: '启用 DeepSeek' })
+      assert.equal(await key.isDisabled(), true)
+      assert.equal(await test.isDisabled(), true)
+      assert.equal(await modal.getByText(/局域网 HTTP 不加密/u).isVisible(), true)
+      assert.equal(await unlock.evaluate((el) => document.activeElement === el), true)
+      await lan.setViewportSize({ width: 390, height: 640 })
+      assert.equal(await modal.evaluate((el) => el.scrollWidth <= el.clientWidth), true)
+      await unlock.press('Enter')
+      assert.equal(await key.evaluate((el) => document.activeElement === el), true)
+      await lan.keyboard.type('lan-typed-test')
+      assert.equal(await key.inputValue(), 'lan-typed-test')
+      await clipboardPage.goto(target.href)
+      await clipboardPage.bringToFront()
+      await clipboardPage.evaluate(() => navigator.clipboard.writeText('lan-pasted-test'))
+      await lan.bringToFront()
+      await lan.keyboard.press('ControlOrMeta+A')
+      await lan.keyboard.press('ControlOrMeta+V')
+      assert.equal(await key.inputValue(), 'lan-pasted-test')
+      assert.equal(await modal.getByText('在此浏览器记住配置').count(), 0)
+      assert.equal(requests.length, 0, '解锁、输入和粘贴不触发 API 请求')
+      assert.equal(await apply.isDisabled(), true)
+      await test.click()
+      await modal.getByText(/连接成功/u).waitFor()
+      assert.equal(await apply.isDisabled(), true)
+      await modal.getByRole('checkbox', { name: /我同意/u }).check()
+      await apply.click()
+      await modal.waitFor({ state: 'hidden' })
+      assert.equal(requests.length, 1)
+      assert.equal(await lan.evaluate(() => localStorage.getItem('typeset-studio:deepseek-config:v1')), null)
+      await lan.reload()
+      await settings.click()
+      assert.equal(await unlock.isVisible(), true)
+      assert.equal(await key.isDisabled(), true)
+      assert.equal(await key.inputValue(), '')
+      await lan.setContent('<iframe src="/?embedded"></iframe>')
+      const frame = lan.frameLocator('iframe')
+      await frame.getByRole('button', { name: 'AI 设置', exact: true }).click()
+      assert.equal(await frame.getByLabel('API Key', { exact: true }).isDisabled(), true)
+      assert.equal(await frame.getByRole('button', { name: '了解风险，临时允许输入' }).count(), 0)
+      requests.length = 0
+    } finally {
+      await clipboardPage.close()
+      await lan.close()
+    }
+
     const page = await context.newPage()
     page.setDefaultTimeout(5000)
     await page.goto(target.href)
@@ -113,12 +250,49 @@ export async function verifyDraftCheck({ browser, target, png }) {
     const setupButton = settings.getByRole('button', { name: '启用 DeepSeek' })
     await settings.waitFor()
     assert.equal(requests.length, 0)
-    assert.equal(await settings.getByLabel('API 地址（固定）').getAttribute('readonly'), '')
+    assert.equal(await keyField.evaluate((el) => document.activeElement === el), true, '弹窗打开后可直接输入 API Key')
+    assert.equal(await keyField.getAttribute('type'), 'password')
+    assert.deepEqual(await settings.locator('.field__label').allTextContents(), ['API 地址（固定）', '模型', 'API Key'])
+    const apiAddress = settings.getByLabel('API 地址（固定）', { exact: true })
+    const modelField = settings.getByLabel('模型', { exact: true })
+    const createKey = settings.getByRole('link', { name: '在 DeepSeek 开放平台创建' })
+    assert.equal(await apiAddress.getAttribute('readonly'), '')
+    assert.equal(await apiAddress.inputValue(), endpoint)
+    await verifyOfficialLinks(settings)
+    await page.keyboard.press('Shift+Tab')
+    assert.equal(await modelField.evaluate((el) => document.activeElement === el), true)
+    await page.keyboard.press('Shift+Tab')
+    assert.equal(await apiAddress.evaluate((el) => document.activeElement === el), true)
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.press('ControlOrMeta+C')
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), endpoint)
+    await page.keyboard.press('X')
+    assert.equal(await apiAddress.inputValue(), endpoint)
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    assert.equal(await createKey.evaluate((el) => document.activeElement === el), true)
+    for (const [width, height] of [[1440, 900], [1024, 768], [390, 640]]) {
+      await page.setViewportSize({ width, height })
+      const bounds = await settings.boundingBox()
+      assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width)
+      assert(await settings.evaluate((el) => el.scrollWidth <= el.clientWidth))
+      if (process.env.AI_SCREENSHOT_DIR) {
+        await settings.screenshot({ path: `${process.env.AI_SCREENSHOT_DIR}/deepseek-layout-${width}.png` })
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
     await page.keyboard.press('Escape')
     await settings.waitFor({ state: 'hidden' })
     assert.equal(await check.evaluate((el) => document.activeElement === el), true)
     await check.click()
-    await keyField.fill('browser-test-only')
+    await page.keyboard.type('abc123')
+    assert.equal(await keyField.inputValue(), 'abc123')
+    await page.evaluate(() => navigator.clipboard.writeText('browser-test-only'))
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.press('ControlOrMeta+V')
+    assert.equal(await keyField.inputValue(), 'browser-test-only')
+    assert.equal(requests.length, 0, '输入和粘贴不能发出请求')
     assert.equal(await setupButton.isDisabled(), true)
     await settings.getByRole('button', { name: '测试连接' }).click()
     await settings.getByRole('status').filter({ hasText: '连接成功' }).waitFor()
