@@ -432,13 +432,7 @@ describe('工作台状态机 · 导入', () => {
   })
 })
 
-describe('工作台状态机 · 清单与平台切换', () => {
-  it('兼容性清单默认展开，可切换折叠', () => {
-    const state = createInitialState({ platform: 'wechat' })
-    expect(state.warningsExpanded).toBe(true)
-    expect(runEvents([{ type: 'warnings/toggled' }], state).warningsExpanded).toBe(false)
-  })
-
+describe('工作台状态机 · 平台切换', () => {
   it('切换平台只改当前平台，不清空成稿', () => {
     const state = typedState()
     const switched = runEvents([{ type: 'platform/changed', platform: 'zhihu' }], state)

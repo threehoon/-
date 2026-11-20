@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PlatformDefinition } from '@/core/types'
 import type { PublishReviewResult } from '@/core/publish-review/review'
 import { reviewPublishDocument } from '@/core/publish-review/review'
@@ -110,7 +110,6 @@ describe('发布预检面板', () => {
     expect(button('一键检测').disabled).toBe(true)
     expect(terms('#publish-review-block')).toContain('重新排版后再检测')
     // 禁用原因留在折叠区外面，键盘用户即使跳过了不可聚焦的按钮也能读到。
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
     expect(button('一键检测').getAttribute('aria-describedby')).toBe('publish-review-block')
   })
 
@@ -122,45 +121,30 @@ describe('发布预检面板', () => {
     expect(terms('.publish-review__check')).toContain('一键排版')
   })
 
-  it('定位命中正文时不额外报警，正文改动后才提示重新检测', () => {
+  it('定位成功时收起详情；找不到目标时保留详情和提示', () => {
     render(resultOf(HTML))
+    const hidePopover = vi.fn()
+    const details = host.querySelector('#publish-review-details')
+    if (!details) throw new Error('找不到预检详情')
+    Object.defineProperty(details, 'hidePopover', { value: hidePopover })
     act(() => button('定位').click())
+    expect(hidePopover).toHaveBeenCalledTimes(1)
     expect(host.querySelector('.publish-review__check')).toBeNull()
     act(() => {
       article.querySelectorAll('p')[1]?.remove()
     })
     act(() => button('定位').click())
+    expect(hidePopover).toHaveBeenCalledTimes(1)
     expect(terms('.publish-review__check')).toContain('未能定位')
   })
 
-  it('手动收起后，改稿又出现新风险时重新展开', () => {
-    render(resultOf('<p>欢迎参加。</p>'))
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
-    act(() => (host.querySelector('.publish-review__summary') as HTMLButtonElement).click())
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
-    // 用户收起后编辑，正文里出现电话：这是新风险，必须重新展开而不是只变色。
+  it('风险详情与关闭入口使用同一个原生浮层，检测按钮保持独立', () => {
     render(resultOf(HTML))
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
-    expect(terms('.publish-review__status')).toBe('发现 1 项疑似风险')
-  })
-
-  it('风险消失再出现时，不会停在手动收起状态', () => {
-    render(resultOf(HTML))
-    act(() => (host.querySelector('.publish-review__summary') as HTMLButtonElement).click())
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
-    // 改掉电话 → 无风险（面板无内容可看）；再改回电话 → 必须重新展开。
-    render(resultOf('<p>欢迎参加。</p><p>联系电话：</p>'))
-    render(resultOf(HTML))
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
-    expect(terms('.publish-review__status')).toBe('发现 1 项疑似风险')
-  })
-
-  it('有风险时自动展开，收起后仍能一键检测', () => {
-    render(resultOf(HTML))
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('true')
-    act(() => (host.querySelector('.publish-review__summary') as HTMLButtonElement).click())
-    expect(host.querySelector('.publish-review__summary')?.getAttribute('aria-expanded')).toBe('false')
-    expect((host.querySelector('#publish-review-body') as HTMLElement).hidden).toBe(true)
-    expect(button('一键检测').disabled).toBe(false)
+    const details = host.querySelector('[popover="auto"]')
+    expect(details?.id).toBe(button('发布预检').getAttribute('popovertarget'))
+    expect(details?.id).toBe(button('关闭详情').getAttribute('popovertarget'))
+    expect(button('关闭详情').getAttribute('popovertargetaction')).toBe('hide')
+    expect(details?.contains(button('定位'))).toBe(true)
+    expect(details?.contains(button('一键检测'))).toBe(false)
   })
 })

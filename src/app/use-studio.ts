@@ -79,10 +79,9 @@ export interface StudioApi {
   readonly setLiveLinkTargets: (targets: readonly PlatformId[]) => string | null
   readonly runTypeset: () => void
   readonly importFiles: (files: readonly File[]) => Promise<void>
-  readonly copy: (kind: CopyKind, previewWarnings: readonly CompatWarning[], focused: boolean) => Promise<void>
+  readonly copy: (kind: CopyKind, previewWarnings: readonly CompatWarning[]) => Promise<void>
   readonly bindAsset: (raw: string, file: File) => void
   readonly unbindAsset: (raw: string) => void
-  readonly toggleWarnings: () => void
   readonly dismissManualCopy: () => void
   readonly dismissImportNotice: () => void
 }
@@ -337,7 +336,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
   }, [dispatch])
 
   const copy = useCallback(
-    async (kind: CopyKind, previewWarnings: readonly CompatWarning[], focused: boolean) => {
+    async (kind: CopyKind, previewWarnings: readonly CompatWarning[]) => {
       const snapshot = stateRef.current
       const document = selectActiveDocument(snapshot)
       if (!document || selectCopyBlockReason(snapshot) !== null) return
@@ -353,8 +352,7 @@ export function useStudio(ports: StudioPorts): StudioApi {
       const notices: string[] = []
       if (warnings.length > 0) {
         const examples = [...new Set(warnings.map(({ message }) => message))].slice(0, 2)
-        const nextStep = focused ? '可退出专注编辑，查看完整兼容性清单。' : '详情请查看兼容性清单。'
-        notices.push(`${name}兼容性提示（${warnings.length} 项）：\n${examples.join('\n')}\n${nextStep}`)
+        notices.push(`${name}兼容性提示（${warnings.length} 项）：\n${examples.join('\n')}\n详情请查看兼容性清单。`)
       }
       if (review.status === 'unavailable') {
         notices.push(`当前成稿未能完成${name}发布预检，请先人工核对平台规则。`)
@@ -422,10 +420,6 @@ export function useStudio(ports: StudioPorts): StudioApi {
 
   const unbindAsset = useCallback((raw: string) => {
     dispatch({ type: 'assets/unbound', raw })
-  }, [dispatch])
-
-  const toggleWarnings = useCallback(() => {
-    dispatch({ type: 'warnings/toggled' })
   }, [dispatch])
 
   const dismissManualCopy = useCallback(() => {
@@ -528,7 +522,6 @@ export function useStudio(ports: StudioPorts): StudioApi {
     copy,
     bindAsset,
     unbindAsset,
-    toggleWarnings,
     dismissManualCopy,
     dismissImportNotice,
   }

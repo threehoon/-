@@ -256,7 +256,7 @@ describe('工作台整页流程', () => {
     expect(container.querySelector('.manual-copy')).toBeNull()
   })
 
-  it.each(['标题', '正文'] as const)('百家号有外链兼容性提示时，收起清单也须逐次确认复制%s', async (label) => {
+  it.each(['标题', '正文'] as const)('百家号有外链兼容性提示时，未打开清单也须逐次确认复制%s', async (label) => {
     const copy = vi.spyOn(corePorts, 'copyRichText').mockResolvedValue({ ok: true, mode: 'rich-text' })
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true).mockReturnValueOnce(false)
     renderApp()
@@ -265,7 +265,6 @@ describe('工作台整页流程', () => {
     act(() => container.querySelector<HTMLButtonElement>('[id$="-baijiahao"]')?.click())
     expect(queryText('.compat__summary')).toContain('复制前需确认')
     expect(queryText('.publish-review__status')).toBe('本地未发现疑似风险')
-    act(() => buttonByText('收起清单').click())
     const action = () => act(() => buttonByText(`复制${label}`).click())
     action()
     expect(confirm).toHaveBeenLastCalledWith(expect.stringMatching(/百家号兼容性提示.*网址仍在正文/su))
@@ -808,18 +807,15 @@ describe('工作台整页流程', () => {
     expect(queryText('.compat__excerpt')).toContain(url)
     expect(queryText('.compat__action')).toContain('原位置手动补插')
 
-    const toggle = buttonByText('收起清单')
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    act(() => toggle.click())
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(container.querySelector('#compat-body')?.hasAttribute('hidden')).toBe(true)
-    act(() => toggle.click())
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    const toggle = buttonByText('微信公众号兼容性')
+    const details = document.getElementById(toggle.getAttribute('popovertarget') ?? '')
+    expect(details?.getAttribute('popover')).toBe('auto')
+    expect(details?.querySelectorAll('.compat__message')).toHaveLength(1)
 
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     await importDraft('# 新稿\n\n不含图片的正文。')
     await typesetWithShortcut()
-    expect(container.querySelector('.preview-compatibility')).toBeNull()
+    expect(container.querySelector('.compat')).toBeNull()
   })
 
   it('图片位置改变时兼容性提示随之更新；删除坏图后复制不再要求确认', async () => {
@@ -843,7 +839,7 @@ describe('工作台整页流程', () => {
     removeFirstImage()
     expect(queryText('.compat__message')).toContain('第 1 张预览图片「坏图」')
     removeFirstImage()
-    expect(container.querySelector('.preview-compatibility')).toBeNull()
+    expect(container.querySelector('.compat')).toBeNull()
     act(() => buttonByText('复制正文').click())
     await flush()
     expect(confirm).not.toHaveBeenCalled()
@@ -858,7 +854,7 @@ describe('工作台整页流程', () => {
     typeSource('# 一篇中文样稿\n\n第一段正文。')
     await typesetWithShortcut()
 
-    expect(container.querySelector('.preview-compatibility')).toBeNull()
+    expect(container.querySelector('.compat')).toBeNull()
     expect(container.querySelector('.preview-banner')).toBeNull()
     expect(queryText('.status-chip')).toContain('已排版')
     expect(queryText('.article')).toBe('第一段正文。')

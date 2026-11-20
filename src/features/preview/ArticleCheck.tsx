@@ -6,7 +6,8 @@ import { articleTextUnits, contentFindingElement, contentRange, rangeOf, type Co
 import { compatibilityTargets, locateRange, outcomeRange, selectTitleInput } from './issue-locations'
 import { checkAgainstBaseline } from './content-baseline'
 import { censusOf, type ContentCensus } from './content-census'
-import { ARTICLE_CHECK_FORM_ID } from './panel-ids'
+import { ARTICLE_CHECK_DETAILS_ID, ARTICLE_CHECK_FORM_ID } from './panel-ids'
+import { InspectionPopover } from './InspectionPopover'
 import { checkBlocks, requestDeepSeek, type DeepSeekConfig } from './deepseek-check'
 import { aiTarget, matchDeepSeekIssues, rebaseAiAnchors, sameCheckText, type AiAnchor, type AiTarget } from './deepseek-findings'
 
@@ -78,6 +79,8 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline, config, on
   readonly titleText: string | null
 }) {
   const panel = useRef<HTMLFormElement>(null)
+  // The browser supports an invoker for imperative popovers; the bundled DOM types only declare the older signature.
+  const details = useRef<HTMLElement & { showPopover(options: { source: HTMLElement }): void }>(null)
   const imageRules = useRef<HTMLStyleElement>(null)
   const returnButton = useRef<HTMLButtonElement>(null)
   const pending = useRef<AbortController | null>(null)
@@ -168,11 +171,7 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline, config, on
 
   async function runAiCheck() {
     const root = canvas()
-    if (!enabled || !root || pending.current) return
-    if (!config) {
-      onOpenSettings?.()
-      return
-    }
+    if (!enabled || !root || !config || pending.current) return
     const units = articleTextUnits(root)
     const blocks = checkBlocks(units)
     anchors.current = null
@@ -187,7 +186,6 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline, config, on
     pending.current = request
     setBusy(true)
     setAiStatus('DeepSeek 正在检查当前成稿…')
-    if (inEditor) requestAnimationFrame(() => panel.current?.scrollIntoView?.({ block: 'nearest' }))
     try {
       const issues = await requestDeepSeek(config, blocks, request.signal)
       if (request.signal.aborted) return
@@ -245,7 +243,10 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline, config, on
     if (!root) return
     const outcome = contentRange(articleTextUnits(root), finding, root.querySelector('#platform-article'), element)
     const range = outcomeRange(outcome)
-    if (range) locateRange(range)
+    if (range) {
+      details.current?.hidePopover?.()
+      locateRange(range)
+    }
     const text = outcome.status === 'unavailable' ? `未能定位：${outcome.reason}`
       : outcome.status === 'block' ? '已定位到疑似缩短的整个段落。' : null
     setLocateNotice(text ? { id: finding.id, text } : null)
@@ -265,35 +266,43 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline, config, on
       ? review && getComputedStyle(review).position === 'sticky' ? review.offsetHeight : 0
       : locatorHost?.offsetHeight ?? 0
     if (target?.unit.element instanceof HTMLInputElement) {
+      if (fromList) details.current?.hidePopover?.()
       selectTitleInput(target.unit.element, target.start, target.end, fromList)
       return
     }
     const range = target ? rangeOf(target.unit, target.start, target.end) : null
-    if (range) locateRange(range, inset)
-    if (fromList && range) returnButton.current?.focus({ preventScroll: true })
+    if (range) {
+      if (fromList) details.current?.hidePopover?.()
+      locateRange(range, inset)
+      if (fromList) returnButton.current?.focus({ preventScroll: true })
+    }
   }
 
   return (
-    <form ref={panel} id={ARTICLE_CHECK_FORM_ID} className="content-check" aria-label="内容检查"
-      hidden={inEditor && !aiStatus && localRows === null} onSubmit={(event) => {
-        event.preventDefault()
-        const submitter = event.nativeEvent.submitter
-        if (submitter instanceof HTMLButtonElement && submitter.value === 'local') runLocalCheck()
-        else void runAiCheck()
-      }}>
+    <form ref={panel} id={ARTICLE_CHECK_FORM_ID} className="content-check" aria-label="内容检查" onSubmit={(event) => {
+      event.preventDefault()
+      const submitter = event.nativeEvent.submitter
+      if (!enabled || !(submitter instanceof HTMLButtonElement)) return
+      const local = submitter.value === 'local'
+      if (!local && !config) {
+        onOpenSettings?.()
+        return
+      }
+      if (details.current?.showPopover && !details.current.matches(':popover-open')) {
+        details.current.showPopover({ source: submitter })
+      }
+      if (local) runLocalCheck()
+      else if (!aiStatus) void runAiCheck()
+    }}>
       <style ref={imageRules} />
-      <div className="content-check__actions">
-        {inEditor ? null : <button className="btn btn--secondary btn--small" type="submit" disabled={!enabled || !onOpenSettings || busy}>
-          AI 检查内容
-        </button>}
-        {busy ? <button className="btn btn--ghost btn--small" type="button" onClick={cancelAiCheck}>取消 AI 检查</button> : null}
-        {baseline ? <button className="btn btn--ghost btn--small" type="button" disabled={!enabled} onClick={runLocalCheck}>本地比对</button> : null}
-      </div>
-      {aiStatus || !inEditor && onOpenSettings ? (
-        <p className="content-check__summary" role="status">
-          {aiStatus || (config ? '点击后发送当前成稿纯文本给 DeepSeek。' : '首次使用请先配置 DeepSeek。')}
-        </p>
-      ) : null}
+      {inEditor ? null : (
+        <div className="content-check__actions content-check__actions--preview">
+          <button className="btn btn--secondary btn--small" type="submit" aria-controls={ARTICLE_CHECK_DETAILS_ID}
+            disabled={!enabled || !onOpenSettings}>AI 检查内容</button>
+          {baseline ? <button className="btn btn--ghost btn--small" type="submit" value="local"
+            aria-controls={ARTICLE_CHECK_DETAILS_ID} disabled={!enabled}>本地比对</button> : null}
+        </div>
+      )}
       {locatorHost && aiRows.length ? createPortal(
         <div className="ai-locator" role="group" aria-label="AI 定位导航"
           data-title-current={current?.title && aiPrecision[aiIndex] !== 'unavailable' ? true : undefined}>
@@ -316,24 +325,35 @@ export function ArticleCheck({ enabled, inEditor, warnings, baseline, config, on
           {notice ? <p className="ai-locator__notice" role="status">{notice}</p> : null}
         </div>, locatorHost,
       ) : null}
-      {aiRows.length ? <>
-        <p className="content-check__summary">这批建议来自上次检查。改稿后可继续定位，不会自动复检。</p>
-        <ul className="content-check__list" aria-label="AI 检查结果">
-          {aiRows.map((finding, index) => (
-            <FindingItem key={finding.id} finding={finding} feedback={aiNotice(finding, aiPrecision[index])}
-              onLocate={() => locateAi(index, true)} ai selected={index === aiIndex} />
+      <InspectionPopover id={ARTICLE_CHECK_DETAILS_ID} heading="内容检查详情" panelRef={details}>
+        {aiStatus ? <p className="content-check__summary" role="status">{aiStatus}</p> : null}
+        <div className="content-check__actions">
+          {busy ? <button className="btn btn--ghost btn--small" type="button" onClick={cancelAiCheck}>取消 AI 检查</button> : null}
+          {!busy && config ? (
+            <button className="btn btn--ghost btn--small" type="button" disabled={!enabled} onClick={() => void runAiCheck()}>
+              {aiStatus ? '重新检查' : '运行 AI 检查'}
+            </button>
+          ) : null}
+        </div>
+        {aiRows.length ? <>
+          <p className="content-check__summary">这批建议来自上次检查。改稿后可继续定位，不会自动复检。</p>
+          <ul className="content-check__list" aria-label="AI 检查结果">
+            {aiRows.map((finding, index) => (
+              <FindingItem key={finding.id} finding={finding} feedback={aiNotice(finding, aiPrecision[index])}
+                onLocate={() => locateAi(index, true)} ai selected={index === aiIndex} />
+            ))}
+          </ul>
+        </> : null}
+        {localRows === null ? null : <p className="content-check__summary" role="status">
+          {localRows.length ? `本地比对发现 ${localRows.length} 处需核对，仅比较排版前后的段落与元素。` : '本地比对未发现明显结构差异。'}
+        </p>}
+        {localRows?.length ? <ul className="content-check__list" aria-label="本地比对结果">
+          {localRows.map((row) => (
+            <FindingItem key={row.finding.id} finding={row.finding}
+              feedback={locateNotice?.id === row.finding.id ? locateNotice.text : null} onLocate={() => locateLocal(row)} />
           ))}
-        </ul>
-      </> : null}
-      {localRows === null ? null : <p className="content-check__summary" role="status">
-        {localRows.length ? `本地比对发现 ${localRows.length} 处需核对，仅比较排版前后的段落与元素。` : '本地比对未发现明显结构差异。'}
-      </p>}
-      {localRows?.length ? <ul className="content-check__list" aria-label="本地比对结果">
-        {localRows.map((row) => (
-          <FindingItem key={row.finding.id} finding={row.finding}
-            feedback={locateNotice?.id === row.finding.id ? locateNotice.text : null} onLocate={() => locateLocal(row)} />
-        ))}
-      </ul> : null}
+        </ul> : null}
+      </InspectionPopover>
     </form>
   )
 }

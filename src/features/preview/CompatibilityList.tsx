@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { CompatWarning, WarningSeverity } from '@/core/types'
 import { Icon } from '@/components/Icon'
 import { clipExcerpt } from '@/app/text'
+import { InspectionPopover } from './InspectionPopover'
 
 const SEVERITY_LABEL: Record<WarningSeverity, string> = {
   blocker: '必须处理',
@@ -12,8 +13,6 @@ const SEVERITY_LABEL: Record<WarningSeverity, string> = {
 export interface CompatibilityListProps {
   readonly platformName: string
   readonly warnings: readonly CompatWarning[]
-  readonly expanded: boolean
-  readonly onToggle: () => void
   /** 定位结果：命中原文、只落到段落、或找不到；界面按三种情况给出不同反馈。 */
   readonly onLocate?: (warning: CompatWarning) => LocateFeedback
 }
@@ -30,16 +29,16 @@ const LOCATE_NOTICE: Record<LocateFeedback['status'], string | null> = {
 }
 
 /**
- * 复制按钮旁边的兼容性清单：默认展开（复制前必须看得见），
+ * 复制按钮旁保留风险摘要，详情只在主动打开侧栏后显示。
  * blocker 前置实心标记，并同时写出文字等级，不靠颜色单独传达。
  */
 export function CompatibilityList({
   platformName,
   warnings,
-  expanded,
-  onToggle,
   onLocate,
 }: CompatibilityListProps) {
+  const id = useId()
+  const panel = useRef<HTMLElement>(null)
   const [notice, setNotice] = useState<{ id: string; text: string } | null>(null)
   const blockers = warnings.filter((warning) => warning.severity === 'blocker').length
   const rest = warnings.length - blockers
@@ -50,25 +49,13 @@ export function CompatibilityList({
     : `${warnings.length} 项兼容性提示 · 复制前需确认`
 
   return (
-    <section className="compat" aria-labelledby="compat-title">
-      <div className="compat__header">
-        <h2 className="compat__title" id="compat-title">
-          {platformName}兼容性
-        </h2>
-        <p className="compat__summary">{summary}</p>
-        <button
-          className="compat__toggle"
-          type="button"
-          aria-expanded={expanded}
-          aria-controls="compat-body"
-          onClick={onToggle}
-        >
-          {expanded ? '收起清单' : `展开清单（${warnings.length}）`}
-          <Icon name="chevron" className="compat__toggle-icon" data-open={expanded} />
-        </button>
-      </div>
-
-      <div id="compat-body" hidden={!expanded}>
+    <section className="compat" aria-label={`${platformName}兼容性检查`}>
+      <button className="compat__toggle" type="button" popoverTarget={id} aria-describedby={`${id}-summary`}>
+        <Icon name="alert" />
+        {platformName}兼容性
+      </button>
+      <p className="compat__summary" id={`${id}-summary`}>{summary}</p>
+      <InspectionPopover id={id} heading={`${platformName}兼容性清单`} panelRef={panel}>
         <ul className="compat__list">
           {warnings.map((warning) => (
             <li
@@ -90,6 +77,7 @@ export function CompatibilityList({
                     aria-label={`定位 ${warning.message}`}
                     onClick={() => {
                       const feedback = onLocate(warning)
+                      if (feedback.status === 'located') panel.current?.hidePopover?.()
                       const text = feedback.message ?? LOCATE_NOTICE[feedback.status]
                       setNotice(text ? { id: warning.id, text } : null)
                     }}
@@ -112,7 +100,7 @@ export function CompatibilityList({
             </li>
           ))}
         </ul>
-      </div>
+      </InspectionPopover>
     </section>
   )
 }

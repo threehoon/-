@@ -16,7 +16,7 @@ import { Icon } from '@/components/Icon'
 import { EditableArticle, type ArticleLayout } from './EditableArticle'
 import { ArticleCheck } from './ArticleCheck'
 import type { DeepSeekConfig } from './deepseek-check'
-import { CompatibilityList, type CompatibilityListProps, type LocateFeedback } from './CompatibilityList'
+import { CompatibilityList, type LocateFeedback } from './CompatibilityList'
 import { compatibilityTargets, locateRange } from './issue-locations'
 
 const NO_WARNINGS: readonly CompatWarning[] = []
@@ -96,7 +96,6 @@ export interface PreviewPanelProps {
   readonly focused?: boolean
   readonly onFocusChange?: (enabled: boolean) => void
   readonly renderActions?: (editAction: ReactNode, focusAction: ReactNode, editing: boolean, templateBlockReason: string | null) => ReactNode
-  readonly compatibility?: Pick<CompatibilityListProps, 'expanded' | 'onToggle'>
   readonly compatibilityWarnings?: readonly CompatWarning[]
   readonly onLocateSource?: (location: CompatibilityLocation) => boolean
   readonly publishReview?: ReactNode
@@ -133,7 +132,6 @@ export function PreviewPanel({
   focused = false,
   onFocusChange,
   renderActions,
-  compatibility,
   compatibilityWarnings = NO_WARNINGS,
   onLocateSource,
   publishReview,
@@ -198,19 +196,15 @@ export function PreviewPanel({
       <>
         {renderActions?.(action, focusAction, isEditing, templateBlockReason)}
         {tools}
-        {compatibility && compatibilityWarnings.length ? (
-          <div className="preview-compatibility" data-editing={isEditing}>
+        <section className="preview" style={focusStyle} aria-label={`${platform.name}预览`}>
+          {document && compatibilityWarnings.length ? (
             <CompatibilityList
               key={`${platform.id}-${generation}`}
               platformName={platform.name}
               warnings={compatibilityWarnings}
-              expanded={compatibility.expanded}
-              onToggle={compatibility.onToggle}
               onLocate={canCheck ? locateCompatibility : undefined}
             />
-          </div>
-        ) : null}
-        <section className="preview" style={focusStyle} aria-label={`${platform.name}预览`}>
+          ) : null}
           <div className="preview__notices">
             {isStale && report?.typesetAt ? (
               <p className="preview-banner" data-tone="quiet">

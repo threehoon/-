@@ -143,7 +143,7 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
     })
     return warnings
   }, [articleHtml, failedSources, state.boundAssets])
-  const warnings = [...api.warnings, ...previewWarnings].filter(({ severity }) => !focused || severity === 'blocker')
+  const warnings = [...api.warnings, ...previewWarnings]
   const activeTemplate = selectActiveTemplate(state)
   const showTemplates = api.document !== null && api.copyBlockReason === null && state.typesetFailure === null
   const templateConflict = selectTemplateEditConflict(state)
@@ -310,10 +310,10 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
                   copyNotice={state.copyNotice}
                   manualCopy={state.manualCopy}
                   onCopyTitle={() => {
-                    void api.copy('title', previewWarnings, focused)
+                    void api.copy('title', previewWarnings)
                   }}
                   onCopyBody={() => {
-                    void api.copy('body', previewWarnings, focused)
+                    void api.copy('body', previewWarnings)
                   }}
                   onDismissManual={api.dismissManualCopy}
                 />
@@ -324,11 +324,9 @@ export function StudioApp({ api }: { readonly api: StudioApi }) {
                   platform={platform}
                   status={api.status}
                   result={api.publishReview}
-                  compact={focused}
                   failed={api.failure !== null || state.typesetFailure !== null}
                 />
               )}
-              compatibility={api.document ? { expanded: state.warningsExpanded, onToggle: api.toggleWarnings } : undefined}
               compatibilityWarnings={warnings}
               onLocateSource={locateSource}
               platform={platform}

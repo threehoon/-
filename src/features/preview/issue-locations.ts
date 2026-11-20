@@ -211,14 +211,19 @@ export interface PublishLocate {
   readonly message: string | null
 }
 
-export function locatePublishFinding(canvas: Element, finding: PublishFinding, previousElement?: Element | null): PublishLocate {
+export function locatePublishFinding(
+  canvas: Element,
+  finding: PublishFinding,
+  previousElement?: Element | null,
+  beforeJump?: () => void,
+): PublishLocate {
   let outcome: LocateOutcome
   try {
     const title = finding.unit < 0 ? articleTitleElement(canvas) : null
     if (title instanceof HTMLInputElement) {
-      const raw = title.value
-      const text = raw.trim()
+      const text = title.value.trim()
       if (text === finding.context && text.slice(finding.start, finding.end) === finding.original) {
+        beforeJump?.()
         selectTitleInput(title, finding.start, finding.end)
         return { status: 'located', message: null }
       }
@@ -229,6 +234,7 @@ export function locatePublishFinding(canvas: Element, finding: PublishFinding, p
     return { status: 'unavailable', message: '定位时出错，请重新点「一键检测」后再试。' }
   }
   if (outcome.status === 'unavailable') return { status: 'unavailable', message: outcome.reason }
+  beforeJump?.()
   locateRange(outcome.range, pinnedInset(canvas))
   highlightPublishRange(outcome.range)
   if (outcome.status === 'block') {

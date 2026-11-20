@@ -468,7 +468,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await shot('17-editor-stack-820')
     evidence.splitWidths = widths
 
-    // Regression: the default expanded warning list must not leave only a sliver for editing.
+    // Regression: long warnings scroll in their own panel, without taking room from the editor.
     await page.setViewportSize({ width: 1024, height: 768 })
     await divider.press('Enter')
     const tables = Array.from({ length: 8 }, (_, i) => `| 第一列 | ${i} |\n| --- | --- |\n| 单元 | ABC |`)
@@ -478,9 +478,11 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await selectRenderedWord(editor.getByText(/单元/).first(), '单元')
     await page.keyboard.insertText('改动')
     await page.locator('#article-patch-status').filter({ hasText: /已修改成稿/ }).waitFor()
+    const compatibility = page.getByRole('button', { name: '百家号兼容性', exact: true })
+    await compatibility.press('Enter')
     const crowdedLayout = await scroll.evaluate((el) => {
       const rect = el.getBoundingClientRect()
-      const list = document.querySelector('.compat__list')
+      const list = document.querySelector('.compat .inspection-popover__body')
       return {
         visibleBodyPx: Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0),
         listScrolls: list.scrollHeight > list.clientHeight,
@@ -491,6 +493,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
       `1024px 警告清单遮住了正文或没有独立滚动：${JSON.stringify(crowdedLayout)}`)
     evidence.crowdedLayout = crowdedLayout
     await shot('22-compact-warning-list-1024')
+    await page.keyboard.press('Escape')
   })
 
   await scenario('A06', async () => {
@@ -713,11 +716,17 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await render('# 工厂交接记录\n\n正文先核对交接记录。\n\n转发后领取资料。')
     await openFocus.click()
     await scroll.evaluate((el) => { el.scrollTop = 0 })
-    assert.equal(await summary.getAttribute('aria-expanded'), 'false')
+    const preflight = page.getByRole('region', { name: '发布预检详情' })
+    assert.equal(await preflight.isVisible(), false)
     assert.match(await page.locator('.publish-review__status').innerText(), /发现 1 项疑似风险/u)
+    const before = await canvasDimensions()
     await summary.click()
-    assert.equal(await summary.getAttribute('aria-expanded'), 'true')
+    await preflight.waitFor()
+    assert.deepEqual(await canvasDimensions(), before, '检查详情不应挤压专注画布')
     assert.match(await page.locator('.publish-review__findings').innerText(), /转发后领取资料/u)
+    await page.keyboard.press('Escape')
+    await preflight.waitFor({ state: 'hidden' })
+    assert(await exitFocus.isVisible(), 'Esc 应先关闭预检，而不是退出专注编辑')
 
     await page.evaluate((key) => localStorage.setItem(key, '9999,50,75'), prefsKey)
     await page.reload()

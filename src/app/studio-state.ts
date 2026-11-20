@@ -94,7 +94,6 @@ export interface StudioState {
   readonly manualCopy: ManualCopy | null
   readonly importNotice: ImportNotice | null
   readonly assetNotice: AssetNotice | null
-  readonly warningsExpanded: boolean
   readonly bodyPatches: Readonly<Partial<Record<PlatformId, BodyPatch>>>
   readonly boundAssets: Readonly<Record<string, string>>
   readonly liveLink: LiveLink | null
@@ -150,7 +149,6 @@ export type StudioEvent =
   | { readonly type: 'assets/unbound'; readonly raw: string }
   | { readonly type: 'assets/failed'; readonly message: string }
   | { readonly type: 'import/notice-cleared' }
-  | { readonly type: 'warnings/toggled' }
   | { readonly type: 'assets/notice-cleared' }
 
 export interface StudioInit {
@@ -177,7 +175,6 @@ export function createInitialState(init: StudioInit): StudioState {
     manualCopy: null,
     importNotice: null,
     assetNotice: null,
-    warningsExpanded: true,
     bodyPatches: {},
     boundAssets: {},
     liveLink: null,
@@ -421,9 +418,6 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
     }
     case 'assets/notice-cleared': {
       return { ...state, assetNotice: null }
-    }
-    case 'warnings/toggled': {
-      return { ...state, warningsExpanded: !state.warningsExpanded }
     }
     default: {
       return state

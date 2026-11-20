@@ -147,6 +147,7 @@ async function verifyWorkbench() {
   const article = page.locator('.article')
   await article.getByRole('img', { name: '可加载' }).waitFor()
   await page.waitForFunction(() => [...document.querySelectorAll('.article img')].some((img) => img.alt === '可加载' && img.naturalWidth > 0))
+  await page.locator('.compat__toggle').click()
   await page.getByText(/预览图片「失效外链」加载失败/).waitFor()
   assert.match(await page.locator('.compat').innerText(), /missing\.png/)
   assert.match(await page.locator('.compat').innerText(), /images\/local\.png/)
@@ -168,6 +169,7 @@ async function verifyWorkbench() {
     assert.equal(await source.inputValue(), markdown)
   }
   await tabs.nth(3).click()
+  await page.locator('.compat__toggle').click()
   assert.match(await page.locator('.compat').innerText(), /表格/)
   await shot('03-baijiahao-1440')
 

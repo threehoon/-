@@ -8,7 +8,7 @@ import { EditorToolbar, type EditorCommand } from '@/features/editor/EditorToolb
 import { activeTypography, FontSizeHistory, runNativeTextStyle, type ActiveTypography } from '@/features/editor/typography'
 import { clipboardImage, LOCAL_IMAGE_ACCEPT, readLocalImage } from './local-image'
 import { editedArticleText } from './article-text'
-import { ARTICLE_CHECK_FORM_ID } from './panel-ids'
+import { ARTICLE_CHECK_DETAILS_ID, ARTICLE_CHECK_FORM_ID } from './panel-ids'
 
 const FORMATS = {
   paragraph: ['formatBlock', 'p'],
@@ -523,8 +523,8 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
           </p>
           <div className="content-check__actions">
             {focusCanvasControl}
-            <button type="submit" form={ARTICLE_CHECK_FORM_ID} className="btn btn--ghost btn--small">AI 检查内容</button>
-            <button type="submit" form={ARTICLE_CHECK_FORM_ID} value="local" className="btn btn--ghost btn--small">本地比对</button>
+            <button type="submit" form={ARTICLE_CHECK_FORM_ID} aria-controls={ARTICLE_CHECK_DETAILS_ID} className="btn btn--ghost btn--small">AI 检查内容</button>
+            <button type="submit" form={ARTICLE_CHECK_FORM_ID} aria-controls={ARTICLE_CHECK_DETAILS_ID} value="local" className="btn btn--ghost btn--small">本地比对</button>
           </div>
         </div>
       ) : null}

@@ -6,6 +6,7 @@ import { reviewPublishUnits, type PublishFinding, type PublishReviewResult } fro
 import { collectBodyUnits } from '@/core/publish-review/units'
 import type { PlatformDefinition } from '@/core/types'
 import type { StudioStatus } from '@/app/studio-state'
+import { InspectionPopover } from './InspectionPopover'
 import { articleTitleElement, locatePublishFinding, publishFindingElement } from './issue-locations'
 
 interface PublishReviewProps {
@@ -13,7 +14,6 @@ interface PublishReviewProps {
   readonly status: StudioStatus
   readonly result: PublishReviewResult | null
   readonly failed: boolean
-  readonly compact?: boolean
 }
 
 /**
@@ -58,12 +58,10 @@ function findingKey(finding: PublishFinding): string {
   return `${finding.rule}-${finding.location}-${finding.start}`
 }
 
-export function PublishReview({ platform, status, result, failed, compact = false }: PublishReviewProps) {
+export function PublishReview({ platform, status, result, failed }: PublishReviewProps) {
   const policy = getPublishPolicy(platform.id)
   const panel = useRef<HTMLElement>(null)
-  // 手动折叠只对当前这份结果有效：结果一变（改稿、重检、换风险）就作废，回到默认展开。
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
-  const [openSignature, setOpenSignature] = useState('')
+  const details = useRef<HTMLElement>(null)
   const [lastLocated, setLastLocated] = useState<{ finding: PublishFinding; element: Element | null } | null>(null)
   const [scan, setScan] = useState<ManualScan | null>(null)
   const [feedback, setFeedback] = useState<{
@@ -82,14 +80,8 @@ export function PublishReview({ platform, status, result, failed, compact = fals
   const findings = activeScan ? activeScan.findings : derived
   const unavailable = Boolean(activeScan ? activeScan.status === 'unavailable' : result?.status === 'unavailable')
   const needsAttention = findings.length > 0 || unavailable
-  // 渲染期按前值调整状态：结果签名一变就丢掉手动折叠，不必等到副作用里再清。
-  if (openSignature !== signature) {
-    setOpenSignature(signature)
-    setManualOpen(null)
-  }
   const previousTarget = status === 'typeset' && result !== null && lastLocated !== null && !findings.some((item) =>
     findingKey(item) === findingKey(lastLocated.finding) && item.context === lastLocated.finding.context) ? lastLocated : null
-  const open = manualOpen ?? ((!compact && needsAttention) || activeScan !== null || previousTarget !== null)
   const feedbackFor = feedback !== null && feedback.signature === signature ? feedback : null
   const blockReason = (() => {
     if (status === 'stale') return '源稿已更新，当前是上一版成稿；重新排版后再检测。'
@@ -125,7 +117,7 @@ export function PublishReview({ platform, status, result, failed, compact = fals
     const root = canvas()
     if (!root) return setFeedback({ key: findingKey(finding), signature, tone: 'warn', text: '当前没有可定位的正文。' })
     if (previousElement === undefined) setLastLocated({ finding, element: publishFindingElement(root, finding) })
-    const outcome = locatePublishFinding(root, finding, previousElement)
+    const outcome = locatePublishFinding(root, finding, previousElement, () => details.current?.hidePopover?.())
     if (outcome.status === 'unavailable') {
       setFeedback({
         key: findingKey(finding),
@@ -149,13 +141,11 @@ export function PublishReview({ platform, status, result, failed, compact = fals
         <button
           className="publish-review__summary"
           type="button"
-          aria-expanded={open}
-          aria-controls="publish-review-body"
-          onClick={() => setManualOpen(!open)}
+          popoverTarget="publish-review-details"
         >
           <Icon name={needsAttention ? 'alert' : 'file'} />
           <span>发布预检</span>
-          <Icon name="chevron" className="publish-review__chevron" data-open={open} />
+          <Icon name="chevron" className="publish-review__chevron" />
         </button>
         <p className="publish-review__status" role="status">
           {activeScan ? scanStatus(activeScan, failed) : reviewStatus(result, status, failed)}
@@ -175,7 +165,8 @@ export function PublishReview({ platform, status, result, failed, compact = fals
       {blockReason === null ? null : (
         <p className="publish-review__check publish-review__check--bar" data-tone="warn" id="publish-review-block">{blockReason}</p>
       )}
-      <div className="publish-review__content" id="publish-review-body" hidden={!open}>
+      <p className="visually-hidden" role="status">{feedbackFor?.tone === 'muted' ? feedbackFor.text : null}</p>
+      <InspectionPopover id="publish-review-details" heading="发布预检详情" panelRef={details}>
         <p className="publish-review__note">
           仅在本机检查标题和成稿文字，不上传稿件；未提示不等于平台审核通过，图片、代码块、外部内容和事实真伪仍须人工核对。
           {findings.length > 0 ? '每个文字块的同类提示只列首处。' : null}
@@ -190,12 +181,12 @@ export function PublishReview({ platform, status, result, failed, compact = fals
               定位上次提示所在段落
             </button>
             {feedbackFor?.key === findingKey(previousTarget.finding) ? (
-              <p className="publish-review__check" data-tone={feedbackFor.tone} role="status">{feedbackFor.text}</p>
+              <p className="publish-review__check" data-tone={feedbackFor.tone} role={feedbackFor.tone === 'warn' ? 'status' : undefined}>{feedbackFor.text}</p>
             ) : null}
           </div>
         ) : null}
         {findings.length > 0 ? (
-          <ol className="publish-review__findings" tabIndex={0} aria-label="疑似风险位置，可滚动">
+          <ol className="publish-review__findings" aria-label="疑似风险位置">
             {findings.map((finding) => (
               <li key={findingKey(finding)}>
                 <p className="publish-review__finding-title">
@@ -213,7 +204,7 @@ export function PublishReview({ platform, status, result, failed, compact = fals
                   定位
                 </button>
                 {feedbackFor?.key === findingKey(finding) ? (
-                  <p className="publish-review__check" data-tone={feedbackFor.tone} role="status">{feedbackFor.text}</p>
+                  <p className="publish-review__check" data-tone={feedbackFor.tone} role={feedbackFor.tone === 'warn' ? 'status' : undefined}>{feedbackFor.text}</p>
                 ) : null}
               </li>
             ))}
@@ -237,7 +228,7 @@ export function PublishReview({ platform, status, result, failed, compact = fals
           </ul>
           <p className="publish-review__note">规则资料查阅于 <time dateTime={PUBLISH_POLICY_CHECKED_ON}>{PUBLISH_POLICY_CHECKED_ON}</time>，以平台当前公告和审核为准。</p>
         </details>
-      </div>
+      </InspectionPopover>
     </section>
   )
 }
