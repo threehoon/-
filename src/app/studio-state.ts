@@ -65,6 +65,8 @@ export interface BodyPatch {
   readonly baseline: Pick<RenderedDocument, 'html' | 'warnings'>
   /** Private body-only Markdown used to keep platform-degraded blocks portable on future edits. */
   readonly linkedMarkdown?: string
+  /** The current source body was last committed by a successful synchronization. */
+  readonly linkedSource?: true
 }
 
 export interface LiveLink {
@@ -119,6 +121,7 @@ export type StudioEvent =
       readonly baselineReport: TypesetReport
       readonly revision: number
       readonly document: RenderedDocument
+      readonly bodyPatch?: BodyPatch
     }
   | { readonly type: 'typeset/started' }
   | { readonly type: 'typeset/succeeded'; readonly report: TypesetReport }
@@ -222,7 +225,7 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
       if (previous.html === patch.html) return state
       const bodyPatches = { ...state.bodyPatches }
       if (patch.linkedMarkdown === undefined && result.outcome.document.html === patch.html) delete bodyPatches[platform]
-      else bodyPatches[platform] = patch
+      else bodyPatches[platform] = { ...patch, linkedSource: undefined }
       return { ...state, bodyPatches, copyNotice: null, manualCopy: null }
     }
     case 'patch/discarded': {
@@ -240,10 +243,15 @@ export function studioReducer(state: StudioState, event: StudioEvent): StudioSta
       if (state.platform !== platform || report !== event.baselineReport || state.revision !== event.revision ||
         selectActiveTemplate(state) === event.template || state.typesetFailure || selectCopyBlockReason(state) !== null ||
         event.document.platform !== platform || !selectPlatformResult(state, platform)?.outcome.ok ||
-        selectTemplateEditConflict(state)) return state
+        selectTemplateEditConflict(state) ||
+        (state.bodyPatches[platform] !== undefined && event.bodyPatch === undefined)) return state
+      const bodyPatches = event.bodyPatch
+        ? { ...state.bodyPatches, [platform]: event.bodyPatch }
+        : state.bodyPatches
       return {
         ...state,
         platformTemplates: { ...state.platformTemplates, [platform]: event.template },
+        bodyPatches,
         report: {
           ...report,
           results: report.results.map((entry) => entry.platform === platform
@@ -433,10 +441,24 @@ export function hasPlatformEdits(state: StudioState): boolean {
   return state.bodyPatches[state.platform] !== undefined || state.titleOverrides[state.platform] !== undefined
 }
 
+export function isSyncedBodyPatch(
+  patch: BodyPatch | undefined,
+): patch is BodyPatch & { readonly linkedMarkdown: string } {
+  return patch !== undefined && patch.linkedMarkdown !== undefined && patch.html === patch.baseline.html
+}
+
 export function selectTemplateEditConflict(state: StudioState): string | null {
-  return state.bodyPatches[state.platform]
-    ? '当前成稿有手动正文改动。为保留文字和样式，暂不能换版；如需换版，可先另存成稿，再撤销当前平台的改动。'
-    : null
+  const patch = state.bodyPatches[state.platform]
+  if (!patch || isSyncedBodyPatch(patch)) {
+    return null
+  }
+  if (state.liveLink?.source === state.platform) {
+    return state.liveLink.error !== null
+      ? '当前联动来源包含无法无损转换的改动，暂不能换版；请先修复或撤销该改动后再试。'
+      : null
+  }
+  if (patch.linkedSource) return null
+  return '当前成稿有手动正文改动。为保留文字和样式，暂不能换版；如需换版，可先另存成稿，再撤销当前平台的改动。'
 }
 
 /** 空稿判定与「是否已排版」无关，只看源稿本身。 */

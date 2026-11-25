@@ -1,4 +1,10 @@
 import { EDITOR_FONTS, FONT_SIZE_GROUPS, type ActiveTypography } from './typography'
+import type { HistoryAction } from '@/features/preview/article-history'
+
+const historyButtons = [
+  ['undo', '撤回', 'Meta+Z Control+Z', 'M9 14 4 9l5-5M4 9h10a5 5 0 0 1 0 10h-3'],
+  ['redo', '重做', 'Meta+Shift+Z Control+Shift+Z Control+Y', 'm15 14 5-5-5-5m5 5H10a5 5 0 0 0 0 10h3'],
+] as const
 
 const groups = [
   [
@@ -32,14 +38,33 @@ interface EditorToolbarProps {
   readonly onFontFamily: (family: string) => void
   readonly onFontSize: (size: number) => void
   readonly typography: ActiveTypography
+  readonly history: Readonly<Record<HistoryAction, boolean>>
+  readonly onHistory: (action: HistoryAction) => void
 }
 
-export function EditorToolbar({ label, disabled = false, onCommand, onFontFamily, onFontSize, typography }: EditorToolbarProps) {
+export function EditorToolbar({ label, disabled = false, onCommand, onFontFamily, onFontSize, typography, history, onHistory }: EditorToolbarProps) {
   const { fontId, size } = typography
   const numericSize = Number(size)
   const customSize = size !== '' && !FONT_SIZE_GROUPS.some(({ values }) => values.includes(numericSize))
   return (
     <div className="editor-tools" role="group" aria-label={label}>
+      <div className="editor-tools__group editor-tools__history" role="group" aria-label="正文编辑历史">
+        {historyButtons.map(([action, name, shortcuts, path]) => (
+          <button
+            className="editor-tools__button"
+            type="button"
+            key={action}
+            aria-label={name}
+            aria-keyshortcuts={shortcuts}
+            title={action === 'undo' ? '撤回 (⌘/Ctrl+Z)' : '重做 (⌘/Ctrl+Shift+Z)'}
+            disabled={disabled || !history[action]}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onHistory(action)}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={path} /></svg>
+          </button>
+        ))}
+      </div>
       <select
         className="editor-tools__select"
         aria-label="段落与标题级别"

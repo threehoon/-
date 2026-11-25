@@ -43,6 +43,43 @@ function partsOf(content: DocumentFragment): Part[] {
   return parts
 }
 
+/** Compare the edited body with its projection without treating template CSS as article content. */
+export function canRestyleProjectedBody(currentHtml: string, projectedHtml: string, originalHtml: string, assets: Readonly<Record<string, string>>): boolean {
+  const current = fragment(currentHtml)
+  const projected = fragment(projectedHtml)
+  const serializer = createEditSerializer(projected, assets)
+  if (serializer.serialize(bodyNodes(current)) !== serializer.serialize(bodyNodes(projected))) return false
+
+  // Font controls create explicit overrides that Markdown cannot carry. Native block
+  // commands may also copy the old paragraph defaults onto a new block or image.
+  const fontProperties = ['font-family', 'font-size'] as const
+  const paragraphStyles = new Set(Array.from(fragment(originalHtml).querySelectorAll<HTMLElement>('p[style]'),
+    (paragraph) => paragraph.style.cssText))
+  const defaults = new Set<string>()
+  for (const element of projected.querySelectorAll<HTMLElement>('[style]')) {
+    for (const property of fontProperties) {
+      defaults.add(`${element.localName}:${property}:${element.style.getPropertyValue(property)}`)
+    }
+  }
+  for (const element of current.querySelectorAll<HTMLElement>('[style],font')) {
+    if (element.hasAttribute('face') || element.hasAttribute('size')) return false
+    const inheritsParagraphStyle = /^(blockquote|h[1-3])$/.test(element.localName) &&
+      paragraphStyles.has(element.style.cssText)
+    if (inheritsParagraphStyle) continue
+    for (const property of fontProperties) {
+      const value = element.style.getPropertyValue(property)
+      if (!value) continue
+      if (defaults.has(`${element.localName}:${property}:${value}`)) continue
+      const parentStyle = element.parentElement?.closest<HTMLElement>('[style]')?.style
+      if (parentStyle?.getPropertyValue(property) === value) continue
+      if (element.localName === 'img' && property === 'font-size' && value === '16px') continue
+      if (element.localName === 'code' && property === 'font-family' && value === 'monospace') continue
+      return false
+    }
+  }
+  return true
+}
+
 export const UNSAFE_DRAFT_PROJECTION = '当前版本里有已降级的表格、链接或其他结构，无法无损转换此处改动。请撤销这处改动，或从保留原结构的平台发起联动。'
 
 /** Rebuild a portable body without turning unedited, platform-degraded HTML into source. */

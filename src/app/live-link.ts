@@ -1,10 +1,52 @@
 import { projectDraftBody } from '@/core/markdown/project-draft'
 import { isLinkedInlineImage } from '@/core/markdown/serialize-edit'
-import type { PlatformId } from '@/core/types'
+import type { PlatformId, TypesetReport } from '@/core/types'
 import { PLATFORMS } from '@/platforms/registry'
 import type { StudioPorts } from './ports'
 import { selectActiveDocument, selectPatchBlockReason, selectPlatformResult, type StudioEvent, type StudioState } from './studio-state'
 import { reasonOf } from './text'
+
+export function projectLiveBody(state: StudioState, platform: PlatformId, label = '当前'): string {
+  const result = selectPlatformResult(state, platform)?.outcome
+  const platformState = state.platform === platform ? state : { ...state, platform }
+  const current = selectActiveDocument(platformState)
+  if (!result?.ok || !current) throw new Error(`请先为${label}平台生成可编辑的成稿。`)
+  const patch = state.bodyPatches[platform]
+  const linkedMarkdown = patch?.linkedMarkdown
+  const markdown = linkedMarkdown ?? state.typesetBaselines[platform]?.markdown
+  if (markdown === undefined) throw new Error(`找不到${label}平台的排版原文，请先重新排版。`)
+  return projectDraftBody({
+    markdown,
+    bodyOnly: linkedMarkdown !== undefined,
+    originalHtml: patch?.baseline.html ?? result.document.html,
+    editedHtml: current.html,
+    assets: state.boundAssets,
+  })
+}
+
+export function renderPortableBody(options: {
+  readonly state: StudioState
+  readonly platforms: readonly PlatformId[]
+  readonly markdown: string
+  readonly currentHtml: string
+  readonly platformTemplates?: StudioState['platformTemplates']
+  readonly ports: StudioPorts
+}): TypesetReport {
+  const { state, platforms, markdown, currentHtml, platformTemplates = state.platformTemplates, ports } = options
+  const registry = ports.createAssets(state.boundAssets)
+  // Only images already present in the rendered editor may bypass raw Markdown's data: rule.
+  const template = document.createElement('template')
+  template.innerHTML = currentHtml
+  const inlineImages = new Set(Array.from(template.content.querySelectorAll('img[src]'), (image) =>
+    image.getAttribute('src') ?? '').filter(isLinkedInlineImage))
+  return ports.typeset({
+    markdown,
+    bodyOnly: true,
+    titleOverride: null,
+    platformTemplates,
+    assets: { resolve: (path) => inlineImages.has(path) ? { kind: 'bound', url: path } : registry.resolve(path) },
+  }, PLATFORMS.filter(({ id }) => platforms.includes(id)))
+}
 
 function synchronize(
   state: StudioState,
@@ -27,26 +69,18 @@ function synchronize(
   }
   if (!body) return { ...state, titleOverrides }
 
-  const patch = state.bodyPatches[source]
-  const linkedMarkdown = patch?.linkedMarkdown
-  const markdown = linkedMarkdown ?? state.typesetBaselines[source]?.markdown
-  if (markdown === undefined) throw new Error('找不到来源平台的排版原文，请先重新排版。')
-  const portableBody = projectDraftBody({
-    markdown, bodyOnly: linkedMarkdown !== undefined,
-    originalHtml: patch?.baseline.html ?? result.document.html, editedHtml: current.html, assets: state.boundAssets,
+  const portableBody = projectLiveBody(state, source, '来源')
+  const report = renderPortableBody({
+    state,
+    platforms: targets,
+    markdown: portableBody,
+    currentHtml: current.html,
+    ports,
   })
-  const registry = ports.createAssets(state.boundAssets)
-  // Only images already present in the rendered editor may bypass raw Markdown's data: rule.
-  const template = document.createElement('template')
-  template.innerHTML = current.html
-  const inlineImages = new Set(Array.from(template.content.querySelectorAll('img[src]'), (image) =>
-    image.getAttribute('src') ?? '').filter(isLinkedInlineImage))
-  const report = ports.typeset({
-    markdown: portableBody, bodyOnly: true, titleOverride: null, platformTemplates: state.platformTemplates,
-    assets: { resolve: (path) => inlineImages.has(path) ? { kind: 'bound', url: path } : registry.resolve(path) },
-  }, PLATFORMS.filter(({ id }) => targets.includes(id)))
   if (report.parseError) throw new Error(report.parseError)
   const bodyPatches = { ...state.bodyPatches }
+  const sourcePatch = bodyPatches[source]
+  if (sourcePatch && !sourcePatch.linkedSource) bodyPatches[source] = { ...sourcePatch, linkedSource: true }
   for (const id of targets) {
     const outcome = report.results.find(({ platform }) => platform === id)?.outcome
     if (!outcome?.ok) {

@@ -5,7 +5,8 @@ import { reasonOf } from '@/app/text'
 import { Icon } from '@/components/Icon'
 import { inspectUrl } from '@/core/security/policy'
 import { EditorToolbar, type EditorCommand } from '@/features/editor/EditorToolbar'
-import { activeTypography, FontSizeHistory, runNativeTextStyle, type ActiveTypography } from '@/features/editor/typography'
+import { activeTypography, applyFontSize, runNativeTextStyle, type ActiveTypography } from '@/features/editor/typography'
+import { ArticleHistory, bookmarkArticle, restoreArticleBookmark, type HistoryAction } from './article-history'
 import { clipboardImage, LOCAL_IMAGE_ACCEPT, readLocalImage } from './local-image'
 import { editedArticleText } from './article-text'
 import { ARTICLE_CHECK_DETAILS_ID, ARTICLE_CHECK_FORM_ID } from './panel-ids'
@@ -152,7 +153,9 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
   const picker = useRef<HTMLInputElement>(null)
   const caret = useRef<Range | null>(null)
   const typographySelection = useRef<Range | null>(null)
-  const [fontSizeHistory] = useState(() => new FontSizeHistory())
+  const [history] = useState(() => new ArticleHistory())
+  const [historyAvailability, setHistoryAvailability] = useState({ undo: false, redo: false })
+  const beforeSelection = useRef<ReturnType<typeof bookmarkArticle>>(null)
   const [typography, setTypography] = useState<ActiveTypography>({ fontId: '', size: '' })
   const pickerRange = useRef<Range | null>(null)
   const layoutPosition = useRef<LayoutPosition | null>(null)
@@ -162,7 +165,7 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
   const commanding = useRef(false)
   const lastHtml = useRef('')
   // Freeze the initial markup while editing. Applying a different template is the
-  // only in-session operation that replaces the markup and its native undo history.
+  // only in-session operation that replaces the markup and resets its history.
   if (editSession && editSession.template !== template) {
     setEditSession({ html: document.html, template })
     setTypography({ fontId: '', size: '' })
@@ -182,9 +185,11 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
     caret.current = null
     typographySelection.current = null
     pickerRange.current = null
-    fontSizeHistory.clear()
+    beforeSelection.current = null
+    history.clear()
+    setHistoryAvailability({ undo: false, redo: false })
     lastHtml.current = article.innerHTML
-  }, [template, fontSizeHistory])
+  }, [editing, template, history])
 
   useLayoutEffect(() => {
     const article = canvas.current
@@ -219,13 +224,53 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
     setTypography((previous) => previous.fontId === next.fontId && previous.size === next.size ? previous : next)
   }, [])
 
-  function update(article: HTMLElement) {
+  function update(article: HTMLElement, kind = '', record = true) {
     if (!onEdit || composing.current) return
+    const selection = beforeSelection.current
+    beforeSelection.current = null
     const nextHtml = article.innerHTML
     if (nextHtml === lastHtml.current) return
+    if (record) history.record({ html: lastHtml.current, selection }, bookmarkArticle(article), kind)
     lastHtml.current = nextHtml
     onEdit(nextHtml, editedArticleText(article))
+    const undo = history.available('undo')
+    const redo = history.available('redo')
+    setHistoryAvailability((previous) => previous.undo === undo && previous.redo === redo ? previous : { undo, redo })
   }
+
+  function restoreHistory(action: HistoryAction, nativeAlreadyRan = false) {
+    const article = canvas.current
+    if (!article || !editing) return
+    const selection = nativeAlreadyRan ? beforeSelection.current : bookmarkArticle(article)
+    const next = composing.current || readingImage.current || link
+      ? undefined
+      : history.restore(action, { html: lastHtml.current, selection })
+    if (!next && !nativeAlreadyRan) return
+    // Reconcile a non-cancelable native history input before publishing the edit.
+    article.innerHTML = next?.html ?? lastHtml.current
+    if (!restoreArticleBookmark(article, next ? next.selection : selection)) restoreRange(article, null)
+    caret.current = rangeIn(article)
+    typographySelection.current = caret.current
+    setError(null)
+    update(article, '', false)
+    refreshTypography(article, caret.current)
+  }
+
+  useLayoutEffect(() => {
+    const article = canvas.current
+    if (!editing || !article) return
+    const beforeInput = (event: InputEvent) => {
+      if (commanding.current || composing.current) return
+      beforeSelection.current = bookmarkArticle(article)
+      const action = event.inputType === 'historyUndo' ? 'undo' : event.inputType === 'historyRedo' ? 'redo' : null
+      if (action && event.cancelable) {
+        event.preventDefault()
+        restoreHistory(action)
+      }
+    }
+    article.addEventListener('beforeinput', beforeInput)
+    return () => article.removeEventListener('beforeinput', beforeInput)
+  })
 
   function rememberCaret() {
     const article = canvas.current
@@ -236,17 +281,18 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
   function commitEdit(article: HTMLElement, operation: () => boolean): boolean {
     if (composing.current) return false
     // execCommand may fire input before returning; commit here exactly once.
+    beforeSelection.current = bookmarkArticle(article)
     commanding.current = true
+    let applied: boolean
     try {
-      if (!operation()) return false
+      applied = operation()
     } finally {
       commanding.current = false
     }
-    fontSizeHistory.onInput(article, lastHtml.current, '')
     update(article)
     rememberCaret()
     refreshTypography(article, rangeIn(article))
-    return true
+    return applied
   }
 
   function runEdit(article: HTMLElement, command: string, value?: string): boolean {
@@ -265,7 +311,7 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
     restoreRange(article, saved)
     const applied = commitEdit(article, () => 'family' in change
       ? runNativeTextStyle(article, 'fontName', change.family)
-      : fontSizeHistory.apply(article, change.size))
+      : applyFontSize(article, change.size))
     if (!applied) setError('未能应用格式。请重新选中文字后再试。')
     return applied
   }
@@ -456,7 +502,6 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
           if (canvas.current) update(canvas.current)
           caret.current = null
           typographySelection.current = null
-          fontSizeHistory.clear()
           pickerRange.current = null
           setEditSession(null)
         } else {
@@ -487,7 +532,9 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
       {editing ? (
         <EditorToolbar
           label="成稿格式工具栏"
-          disabled={reading || link !== null}
+          disabled={reading || link !== null || isComposing}
+          history={historyAvailability}
+          onHistory={restoreHistory}
           onCommand={format}
           typography={typography}
           onFontFamily={(family) => formatTypography({ family })}
@@ -572,7 +619,16 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
         rememberCaret()
         typographySelection.current = rangeIn(event.currentTarget)
       } : undefined}
-      onCompositionStart={editing ? () => {
+      onKeyDown={editing ? (event) => {
+        if (event.defaultPrevented || event.altKey || (!event.metaKey && !event.ctrlKey) ||
+            event.nativeEvent.isComposing || event.keyCode === 229 || composing.current) return
+        const key = event.key.toLowerCase()
+        if (key !== 'z' && (key !== 'y' || !event.ctrlKey || event.shiftKey)) return
+        event.preventDefault()
+        restoreHistory(key === 'y' || event.shiftKey ? 'redo' : 'undo')
+      } : undefined}
+      onCompositionStart={editing ? (event) => {
+        beforeSelection.current = bookmarkArticle(event.currentTarget)
         composing.current = true
         setIsComposing(true)
       } : undefined}
@@ -586,8 +642,12 @@ export function EditableArticle({ document, template, onEdit, onImageError, hasP
       onInput={editing ? (event) => {
         if (!event.nativeEvent.isComposing && !commanding.current) {
           const article = event.currentTarget
-          fontSizeHistory.onInput(article, lastHtml.current, event.nativeEvent.inputType)
-          update(article)
+          const kind = event.nativeEvent.inputType
+          if (kind === 'historyUndo' || kind === 'historyRedo') {
+            restoreHistory(kind === 'historyUndo' ? 'undo' : 'redo', true)
+            return
+          }
+          update(article, kind)
           refreshTypography(article, rangeIn(article))
         }
       } : undefined}

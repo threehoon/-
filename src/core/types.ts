@@ -5,7 +5,21 @@ import type { Root } from 'mdast'
  */
 export type PlatformId = 'wechat' | 'toutiao' | 'sohu' | 'baijiahao' | 'zhihu' | 'qq'
 
-export type WechatTemplateId = 'classic' | 'airy' | 'brief' | 'editorial' | 'warm' | 'technical'
+export type WechatTemplateCategoryId = 'opinion' | 'briefing' | 'lifestyle' | 'knowledge'
+
+export type WechatTemplateId =
+  | 'classic'
+  | 'airy'
+  | 'brief'
+  | 'editorial'
+  | 'warm'
+  | 'technical'
+  | 'ink'
+  | 'newsletter'
+  | 'vermilion'
+  | 'forest'
+  | 'handbook'
+  | 'minimal'
 
 export const PLATFORM_IDS = [
   'wechat',

@@ -15,6 +15,7 @@
     "test:check-browser": "node scripts/verify-draft-check.mjs",
     "test:publish-review-browser": "node scripts/verify-publish-review.mjs",
     "test:live-link-browser": "node scripts/verify-live-link.mjs",
+    "test:templates-browser": "node scripts/verify-wechat-templates.mjs",
     "test:watch": "vitest",
     "preview": "vite preview --port 4173 --strictPort"
   },

@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium } from 'playwright-core'
 import { resetWorkbench } from './reset-workbench.mjs'
 
-const target = new URL(process.env.TARGET_URL ?? 'http://localhost:5183/')
+const target = new URL(process.env.TARGET_URL ?? 'http://127.0.0.1:5183/')
+const installed = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const out = process.env.OUT_DIR ?? '.tmp/wechat-templates'
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n3sAAAAASUVORK5CYII=', 'base64')
 const photo = 'images/city.png'
 const markdown = `# 沿河散步手记\n\n## 从老街出发\n\n打开地图，沿着河岸经过两座桥。这里有**晨间集市**和安静的巷子。\n\n> 把脚步放慢一点，留意老街一侧的店招。\n\n- 带一瓶水\n- 保留车票\n\n---\n\n| 地点 | 停留 |\n| --- | --- |\n| 河岸 | 20 分钟 |\n\n使用 \`walk --north\` 记下本次路线。\n\n\`\`\`sh\nwalk --north\n\`\`\`\n\n![配对图片](${photo})`
-const titles = ['观点蓝调', '清爽留白', '内容简报', '杂志长文', '暖纸手记', '技术专栏']
+const titles = ['观点蓝调', '清爽留白', '内容简报', '杂志长文', '暖纸手记', '技术专栏', '水墨国风', '深度周刊', '朱砂快讯', '森系轻读', '操作手册', '极简黑白']
 const platforms = [
   { tab: '公众号', name: '微信公众号', variant: '渐变章节签', fill: 'rgb(23, 53, 95)', table: true, code: true },
   { tab: '头条', name: '头条号', variant: '浅蓝章节', fill: 'rgb(237, 243, 250)', table: false, code: true },
@@ -20,7 +22,8 @@ const platforms = [
 ]
 
 await mkdir(out, { recursive: true })
-const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN ?? chromium.executablePath(), headless: true })
+const executablePath = process.env.CHROME_BIN ?? (existsSync(installed) ? installed : chromium.executablePath())
+const browser = await chromium.launch({ executablePath, headless: true })
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce', permissions: ['clipboard-read', 'clipboard-write'] })
   const page = await context.newPage()
@@ -112,8 +115,17 @@ try {
   await gallery.waitFor()
   assert.equal(await choice(titles[0]).getAttribute('aria-pressed'), 'true')
   for (const name of titles) await choice(name).waitFor()
+  const filters = gallery.getByRole('group', { name: '模板分类筛选' })
   await page.keyboard.press('Tab')
-  assert(await gallery.evaluate((el) => el.contains(document.activeElement)))
+  assert(await filters.evaluate((el) => el.contains(document.activeElement)))
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  assert.equal(await filters.getByRole('button', { name: /知识干货/ }).getAttribute('aria-pressed'), 'true')
+  assert.equal(await choice('观点蓝调').count(), 0)
+  for (const name of ['技术专栏', '操作手册', '极简黑白']) await choice(name).waitFor()
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Enter')
+  for (let index = 0; index < 5; index++) await page.keyboard.press('Tab')
   assert.equal(await page.locator('.wechat-templates__choice:focus-within').evaluate((el) => getComputedStyle(el).outlineWidth), '2px')
   await shot('gallery-1440')
   await page.keyboard.press('Escape')
@@ -128,7 +140,7 @@ try {
     assert.equal(await source.inputValue(), markdown)
     assert.equal(await page.locator('.status-chip').textContent(), date)
   }
-  assert.equal(signatures.size, 6)
+  assert.equal(signatures.size, titles.length)
   await tab('头条').click()
   assert.equal(await article.innerHTML(), toutiaoClassic)
   for (const { tab: name } of platforms) {
@@ -281,7 +293,7 @@ try {
     const bounds = await gallery.boundingBox()
     assert(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width && bounds.y + bounds.height <= height)
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
-    assert.equal(await gallery.locator('.wechat-templates__grid').evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length), width < 640 ? 2 : 3)
+    assert.equal(await gallery.locator('.wechat-templates__grid').first().evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length), width < 640 ? 2 : 3)
     await shot(`gallery-${width}`)
     await page.keyboard.press('Escape')
     await gallery.waitFor({ state: 'hidden' })

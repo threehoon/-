@@ -1,15 +1,15 @@
 import { DEFAULT_ARTICLE_FONT } from '@/core/render/article-font'
 import type { RenderTheme } from '@/core/render/theme'
-import type { PlatformId, WechatTemplateId } from '@/core/types'
+import type { PlatformId, WechatTemplateCategoryId, WechatTemplateId } from '@/core/types'
 
 /**
- * 公众号排版模板集。
+ * 多平台排版模板集。
  *
  * 全部样式必须内联：公众号编辑器会丢掉 <style> 和 class。
  *
- * 六套模板共用一套成熟的排印底盘——正文 15–18px、行高 1.8–2.0、段间 16–28px、
- * 一句话只给一种强调手法——差异落在标题形制、列表和引文容器上。
- * 色值与工作台令牌不共用，且在导出时展开为公众号可用的内联颜色。
+ * 十二套模板分为四大使用场景，共用成熟排印底盘——正文 15–17px、行高 1.8–2.0、段间 15–28px、
+ * 一句话只给一种强调手法——差异落在色彩语境、标题形制、列表、代码框与引文容器上。
+ * 色值与工作台令牌不共用，且在导出时展开为平台可用的内联颜色。
  */
 const MONO_STACK = '"JetBrains Mono","SF Mono",Menlo,Consolas,"Songti SC",monospace'
 
@@ -17,11 +17,11 @@ const BLUE = '#0a5cf6'
 const CARD = '#f5f7ff'
 const MARK = '#e8efff'
 
-/** 六套版式的基础排印；不要把默认版专用样式继承到其他模板。 */
+/** 十二套版式的基础排印；不要把默认版专用样式继承到其他模板。 */
 const WECHAT_BASE_THEME: RenderTheme = {
   id: 'wechat',
   wrapperTag: 'section',
-  container: `font-family:${DEFAULT_ARTICLE_FONT};max-width:576px;margin:0 auto;font-size:18px;line-height:2;color:#1f2023;letter-spacing:0.02em;overflow-wrap:anywhere;`,
+  container: `font-family:${DEFAULT_ARTICLE_FONT};max-width:576px;margin:0 auto;font-size:16px;line-height:2;color:#1f2023;letter-spacing:0.02em;overflow-wrap:anywhere;`,
   paragraph: 'margin:0 0 20px;',
   heading: (level, degraded) => {
     // 降级标题仍是粗体小标题，但必须自带字体：预览层的 class 规则会盖主题。
@@ -334,47 +334,381 @@ const TECHNICAL_THEME: RenderTheme = {
   thematicBreak: 'border:none;border-top:2px solid #e3e7ee;margin:26px 0;height:0;',
 }
 
+/** 水墨国风：黛青墨韵、书卷细线标题与青灰素笺引文。 */
+const INK_THEME: RenderTheme = {
+  ...WECHAT_BASE_THEME,
+  id: 'wechat-ink',
+  container: `font-family:${DEFAULT_ARTICLE_FONT};font-size:16.5px;line-height:2;color:#1d2624;letter-spacing:0.03em;word-break:break-word;`,
+  paragraph: 'margin:0 0 24px;',
+  blockquoteParagraph: 'margin:0 0 18px;',
+  heading: (level, degraded) => {
+    if (degraded) {
+      return `font-family:${DEFAULT_ARTICLE_FONT};margin:24px 0 10px;font-size:16.5px;font-weight:700;line-height:1.6;color:#1f3d36;`
+    }
+    switch (level) {
+      case 1:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:0 0 28px;padding:0 0 14px;border-bottom:2px solid #1f3d36;font-size:24px;font-weight:700;line-height:1.45;letter-spacing:0.06em;color:#1f3d36;text-align:center;`
+      case 2:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:38px 0 18px;padding:8px 0 10px;border-top:1px solid #cad9d3;border-bottom:2px solid #1f3d36;font-size:19.5px;font-weight:700;line-height:1.5;letter-spacing:0.06em;color:#1f3d36;`
+      case 3:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:28px 0 12px;padding-left:12px;border-left:3px solid #3c6e63;font-size:17px;font-weight:700;line-height:1.6;color:#244a42;`
+      default:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:22px 0 10px;font-size:16px;font-weight:700;line-height:1.6;color:#244a42;`
+    }
+  },
+  blockquote:
+    `margin:0 0 24px;padding:18px 22px;border-left:3px solid #3c6e63;border-radius:0 6px 6px 0;background-color:#f3f7f5;font-family:${DEFAULT_ARTICLE_FONT};font-size:15.5px;line-height:1.95;color:#2c443e;`,
+  unorderedList: 'margin:0 0 22px;padding-left:22px;',
+  orderedList: 'margin:0 0 22px;padding-left:22px;',
+  listItem: 'margin:0 0 9px;',
+  codeBlock: `margin:0 0 22px;padding:16px 18px;border:1px solid #d8e2de;border-radius:6px;background-color:#f5f7f6;font-family:${MONO_STACK};font-size:13px;line-height:1.8;color:#1d2624;white-space:pre-wrap;word-break:break-word;overflow-x:auto;`,
+  inlineCode: `font-family:${MONO_STACK};font-size:14px;background-color:#eaf1ee;color:#1f3d36;padding:2px 5px;border-radius:3px;`,
+  inlineCodeDegraded: `font-family:${MONO_STACK};font-size:14px;color:#1f3d36;`,
+  table: 'border-collapse:collapse;width:100%;margin:24px 0;border-top:2px solid #1f3d36;border-bottom:1px solid #cad9d3;font-size:14.5px;line-height:1.8;',
+  tableHeadCell:
+    'border:none;border-bottom:1px solid #1f3d36;background-color:#edf3f0;padding:10px 12px;text-align:left;font-weight:700;color:#1f3d36;',
+  tableCell: 'border:none;border-bottom:1px solid #dde6e2;padding:10px 12px;color:#263330;vertical-align:top;',
+  image: 'max-width:100%;height:auto;display:block;margin:26px auto;border-radius:4px;',
+  link: 'color:#1f4f45;text-decoration:none;border-bottom:1px solid #9ab9ae;word-break:break-all;',
+  strong: 'font-weight:700;font-style:normal;color:#16302a;background-color:#e6efec;padding:1px 4px;border-radius:2px;',
+  highlight: 'background-color:#dceae5;color:inherit;',
+  thematicBreak: 'border:none;border-top:1px solid #b8cbc4;width:44%;margin:30px auto;height:0;',
+  imageMarker:
+    'display:block;margin:0 0 20px;padding:12px 16px;border:1px dashed #7ea094;border-radius:6px;background-color:#f3f7f5;color:#2c443e;font-size:14px;line-height:1.6;',
+}
+
+/** 深度周刊：专栏通讯风、靛蓝左侧色标与淡靛底卡片引文。 */
+const NEWSLETTER_THEME: RenderTheme = {
+  ...WECHAT_BASE_THEME,
+  id: 'wechat-newsletter',
+  container: `font-family:${DEFAULT_ARTICLE_FONT};font-size:15.5px;line-height:1.88;color:#1f2233;letter-spacing:0.015em;word-break:break-word;`,
+  paragraph: 'margin:0 0 19px;',
+  blockquoteParagraph: 'margin:0 0 15px;',
+  heading: (level, degraded) => {
+    if (degraded) {
+      return `font-family:${DEFAULT_ARTICLE_FONT};margin:20px 0 9px;font-size:15.5px;font-weight:700;line-height:1.55;color:#2d3166;`
+    }
+    switch (level) {
+      case 1:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:0 0 24px;padding:0 0 12px;border-bottom:2px solid #2d3166;font-size:22px;font-weight:700;line-height:1.45;color:#2d3166;`
+      case 2:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:30px 0 15px;padding:10px 14px;border-left:5px solid #2d3166;border-radius:0 8px 8px 0;background-color:#f4f5fc;font-size:18px;font-weight:700;line-height:1.5;color:#2d3166;`
+      case 3:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:22px 0 10px;padding:0 0 5px;border-bottom:1px solid #d5d9ef;font-size:16.5px;font-weight:700;line-height:1.55;color:#363b7a;`
+      default:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:18px 0 9px;font-size:15.5px;font-weight:700;line-height:1.55;color:#363b7a;`
+    }
+  },
+  blockquote:
+    'margin:0 0 20px;padding:16px 20px;border:1px solid #dfe2f4;border-left:4px solid #2d3166;border-radius:8px;background-color:#f4f5fc;color:#34395e;font-size:15px;line-height:1.88;',
+  unorderedList: 'margin:0 0 19px;padding-left:20px;',
+  orderedList: 'margin:0 0 19px;padding-left:20px;',
+  listItem: 'margin:0 0 7px;',
+  codeBlock: `margin:0 0 20px;padding:15px 18px;border:1px solid #dfe2f4;border-left:3px solid #2d3166;border-radius:6px;background-color:#f5f6fb;font-family:${MONO_STACK};font-size:13px;line-height:1.75;color:#1f2233;white-space:pre-wrap;word-break:break-word;overflow-x:auto;`,
+  inlineCode: `font-family:${MONO_STACK};font-size:13.5px;background-color:#eceef9;color:#2d3166;padding:2px 5px;border-radius:4px;`,
+  inlineCodeDegraded: `font-family:${MONO_STACK};font-size:13.5px;color:#2d3166;`,
+  table: 'border-collapse:collapse;width:100%;margin:22px 0;border:1px solid #dfe2f4;font-size:14px;line-height:1.75;',
+  tableHeadCell:
+    'border:1px solid #d7dbf0;background-color:#eff0fa;padding:9px 11px;text-align:left;font-weight:700;color:#2d3166;',
+  tableCell: 'border:1px solid #e4e6f4;padding:9px 11px;color:#2b2f42;vertical-align:top;',
+  image: 'max-width:100%;height:auto;display:block;margin:22px auto;border-radius:8px;',
+  link: 'color:#343c8c;text-decoration:none;border-bottom:1px solid #aeb4e6;word-break:break-all;',
+  strong: 'font-weight:700;font-style:normal;color:#232757;background-color:#e5e8f8;padding:1px 4px;border-radius:3px;',
+  highlight: 'background-color:#dfe3f7;color:inherit;',
+  thematicBreak: 'border:none;border-top:2px dotted #c7cce8;margin:26px 0;height:0;',
+  imageMarker:
+    'display:block;margin:0 0 20px;padding:12px 16px;border:1px dashed #8f96c9;border-radius:8px;background-color:#f4f5fc;color:#34395e;font-size:14px;line-height:1.6;',
+}
+
+/** 朱砂快讯：醒目朱砂导语条与快讯标题，白底克制用红。 */
+const VERMILION_THEME: RenderTheme = {
+  ...WECHAT_BASE_THEME,
+  id: 'wechat-vermilion',
+  container: `font-family:${DEFAULT_ARTICLE_FONT};font-size:15.5px;line-height:1.86;color:#221d1c;letter-spacing:0.01em;word-break:break-word;`,
+  paragraph: 'margin:0 0 17px;',
+  blockquoteParagraph: 'margin:0 0 14px;',
+  heading: (level, degraded) => {
+    if (degraded) {
+      return `font-family:${DEFAULT_ARTICLE_FONT};margin:20px 0 8px;font-size:15.5px;font-weight:700;line-height:1.55;color:#7e1f18;`
+    }
+    switch (level) {
+      case 1:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:0 0 22px;padding:0 0 12px;border-bottom:3px solid #a82c22;font-size:22px;font-weight:700;line-height:1.45;color:#7e1f18;`
+      case 2:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:28px 0 14px;padding:9px 14px;border-left:4px solid #a82c22;border-radius:0 4px 4px 0;background-color:#fcf5f4;font-size:17.5px;font-weight:700;line-height:1.5;color:#7e1f18;`
+      case 3:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:22px 0 10px;padding-left:10px;border-left:2px solid #c65d53;font-size:16px;font-weight:700;line-height:1.55;color:#8e241b;`
+      default:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:18px 0 8px;font-size:15px;font-weight:700;line-height:1.55;color:#8e241b;`
+    }
+  },
+  blockquote:
+    'margin:0 0 18px;padding:15px 18px;border-left:3px solid #a82c22;border-radius:0 6px 6px 0;background-color:#fcf5f4;color:#4e2f2b;font-size:14.5px;line-height:1.85;',
+  unorderedList: 'margin:0 0 17px;padding-left:20px;',
+  orderedList: 'margin:0 0 17px;padding-left:20px;',
+  listItem: 'margin:0 0 6px;',
+  codeBlock: `margin:0 0 18px;padding:14px 16px;border:1px solid #edd8d5;border-radius:6px;background-color:#faf6f5;font-family:${MONO_STACK};font-size:13px;line-height:1.72;color:#221d1c;white-space:pre-wrap;word-break:break-word;overflow-x:auto;`,
+  inlineCode: `font-family:${MONO_STACK};font-size:13.5px;background-color:#f7e8e6;color:#7e1f18;padding:2px 5px;border-radius:3px;`,
+  inlineCodeDegraded: `font-family:${MONO_STACK};font-size:13.5px;color:#7e1f18;`,
+  table: 'border-collapse:collapse;width:100%;margin:20px 0;border-top:2px solid #a82c22;font-size:14px;line-height:1.7;',
+  tableHeadCell:
+    'border:1px solid #ebd5d2;background-color:#faeeec;padding:9px 10px;text-align:left;font-weight:700;color:#7e1f18;',
+  tableCell: 'border:1px solid #f0e1df;padding:9px 10px;color:#2f2726;vertical-align:top;',
+  image: 'max-width:100%;height:auto;display:block;margin:20px auto;border-radius:4px;',
+  link: 'color:#8f241b;text-decoration:none;border-bottom:1px solid #d99b95;word-break:break-all;',
+  strong: 'font-weight:700;font-style:normal;color:#6b1812;background-color:#f7e6e4;padding:1px 4px;border-radius:2px;',
+  highlight: 'background-color:#f5dcd8;color:inherit;',
+  thematicBreak: 'border:none;border-top:1px solid #e7ccc9;margin:24px 0;height:0;',
+  imageMarker:
+    'display:block;margin:0 0 20px;padding:12px 16px;border:1px dashed #c9867f;border-radius:6px;background-color:#fcf5f4;color:#4e2f2b;font-size:14px;line-height:1.6;',
+}
+
+/** 森系轻读：松林绿强调、薄荷浅底引文与松弛段距。 */
+const FOREST_THEME: RenderTheme = {
+  ...WECHAT_BASE_THEME,
+  id: 'wechat-forest',
+  container: `font-family:${DEFAULT_ARTICLE_FONT};font-size:16px;line-height:1.96;color:#1d2b24;letter-spacing:0.025em;word-break:break-word;`,
+  paragraph: 'margin:0 0 25px;',
+  blockquoteParagraph: 'margin:0 0 18px;',
+  heading: (level, degraded) => {
+    if (degraded) {
+      return `font-family:${DEFAULT_ARTICLE_FONT};margin:24px 0 11px;font-size:16px;font-weight:600;line-height:1.6;color:#154030;`
+    }
+    switch (level) {
+      case 1:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:0 0 28px;font-size:23px;font-weight:600;line-height:1.48;letter-spacing:0.04em;color:#154030;text-align:center;`
+      case 2:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:36px 0 16px;padding:6px 14px;border-left:4px solid #1e5641;border-radius:10px;background-color:#f2f8f5;font-size:18.5px;font-weight:600;line-height:1.5;color:#154030;`
+      case 3:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:26px 0 12px;padding:0 0 6px;border-bottom:1px solid #cfe3d8;font-size:16.5px;font-weight:600;line-height:1.6;color:#1e5641;`
+      default:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:22px 0 10px;font-size:16px;font-weight:600;line-height:1.6;color:#1e5641;`
+    }
+  },
+  blockquote:
+    'margin:0 0 25px;padding:18px 22px;border-left:3px solid #1e5641;border-radius:10px;background-color:#f2f8f5;color:#244739;font-size:15.5px;line-height:1.95;',
+  unorderedList: 'margin:0 0 24px;padding-left:22px;',
+  orderedList: 'margin:0 0 24px;padding-left:22px;',
+  listItem: 'margin:0 0 10px;',
+  codeBlock: `margin:0 0 24px;padding:16px 18px;border:1px solid #d5e5dc;border-radius:10px;background-color:#f4f9f6;font-family:${MONO_STACK};font-size:13px;line-height:1.8;color:#1d2b24;white-space:pre-wrap;word-break:break-word;overflow-x:auto;`,
+  inlineCode: `font-family:${MONO_STACK};font-size:14px;background-color:#e8f3ed;color:#154030;padding:2px 6px;border-radius:4px;`,
+  inlineCodeDegraded: `font-family:${MONO_STACK};font-size:14px;color:#154030;`,
+  table: 'border-collapse:collapse;width:100%;margin:26px 0;border:1px solid #d5e5dc;font-size:14.5px;line-height:1.8;',
+  tableHeadCell:
+    'border:1px solid #cfe2d7;background-color:#ecf5f0;padding:10px 12px;text-align:left;font-weight:600;color:#154030;',
+  tableCell: 'border:1px solid #dfece4;padding:10px 12px;color:#26382f;vertical-align:top;',
+  image: 'max-width:100%;height:auto;display:block;margin:26px auto;border-radius:10px;',
+  link: 'color:#1b523d;text-decoration:none;border-bottom:1px solid #9dc4b0;word-break:break-all;',
+  strong: 'font-weight:700;font-style:normal;color:#12382a;background-color:#e2f0e8;padding:1px 4px;border-radius:4px;',
+  highlight: 'background-color:#d8ebdf;color:inherit;',
+  thematicBreak: 'border:none;border-top:1px dashed #b9d4c5;width:48%;margin:30px auto;height:0;',
+  imageMarker:
+    'display:block;margin:0 0 20px;padding:12px 16px;border:1px dashed #7ba892;border-radius:10px;background-color:#f2f8f5;color:#244739;font-size:14px;line-height:1.6;',
+}
+
+/** 操作手册：琥珀棕步骤标题、提示卡片与清晰网格表格。 */
+const HANDBOOK_THEME: RenderTheme = {
+  ...WECHAT_BASE_THEME,
+  id: 'wechat-handbook',
+  container: `font-family:${DEFAULT_ARTICLE_FONT};font-size:15.5px;line-height:1.88;color:#241f1a;letter-spacing:0.01em;word-break:break-word;`,
+  paragraph: 'margin:0 0 15px;',
+  blockquoteParagraph: 'margin:0 0 13px;',
+  heading: (level, degraded) => {
+    if (degraded) {
+      return `font-family:${DEFAULT_ARTICLE_FONT};margin:20px 0 8px;font-size:15.5px;font-weight:700;line-height:1.55;color:#633404;`
+    }
+    switch (level) {
+      case 1:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:0 0 22px;padding:0 0 10px;border-bottom:2px solid #8a4b08;font-size:21.5px;font-weight:700;line-height:1.45;color:#633404;`
+      case 2:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:28px 0 14px;padding:9px 14px;border:1px solid #ead8bd;border-left:5px solid #8a4b08;border-radius:4px;background-color:#fbf6ee;font-size:17.5px;font-weight:700;line-height:1.5;color:#633404;`
+      case 3:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:22px 0 9px;padding-left:10px;border-left:3px solid #b5732b;font-size:16px;font-weight:700;line-height:1.55;color:#733c05;`
+      default:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:18px 0 8px;font-size:15px;font-weight:700;line-height:1.55;color:#733c05;`
+    }
+  },
+  blockquote:
+    'margin:0 0 18px;padding:15px 18px;border:1px solid #ead8bd;border-left:4px solid #8a4b08;border-radius:6px;background-color:#fbf6ee;color:#4d3316;font-size:14.5px;line-height:1.86;',
+  unorderedList: 'margin:0 0 16px;padding-left:20px;',
+  orderedList: 'margin:0 0 16px;padding-left:20px;',
+  listItem: 'margin:0 0 6px;',
+  codeBlock: `margin:0 0 18px;padding:15px 16px;border:1px solid #e6d4b8;border-top:3px solid #8a4b08;border-radius:6px;background-color:#faf6f0;font-family:${MONO_STACK};font-size:13px;line-height:1.75;color:#241f1a;white-space:pre-wrap;word-break:break-word;overflow-x:auto;`,
+  inlineCode: `font-family:${MONO_STACK};font-size:13.5px;background-color:#f5ebdc;color:#633404;padding:2px 5px;border:1px solid #e7d6bc;border-radius:3px;`,
+  inlineCodeDegraded: `font-family:${MONO_STACK};font-size:13.5px;color:#633404;`,
+  table: 'border-collapse:collapse;width:100%;margin:18px 0;border:1px solid #e2cfa8;font-size:14px;line-height:1.75;',
+  tableHeadCell:
+    'border:1px solid #e2cfa8;background-color:#f7efe2;padding:9px 10px;text-align:left;font-weight:700;color:#633404;',
+  tableCell: 'border:1px solid #ecdfc9;padding:9px 10px;color:#2f2821;vertical-align:top;',
+  image: 'max-width:100%;height:auto;display:block;margin:20px auto;border-radius:6px;',
+  link: 'color:#753e06;text-decoration:none;border-bottom:1px solid #cfa572;word-break:break-all;',
+  strong: 'font-weight:700;font-style:normal;color:#592e03;background-color:#f4e7d3;padding:1px 4px;border-radius:3px;',
+  highlight: 'background-color:#f0dec2;color:inherit;',
+  thematicBreak: 'border:none;border-top:2px solid #e7d6bc;margin:24px 0;height:0;',
+  imageMarker:
+    'display:block;margin:0 0 20px;padding:12px 16px;border:1px dashed #b98952;border-radius:6px;background-color:#fbf6ee;color:#4d3316;font-size:14px;line-height:1.6;',
+}
+
+/** 极简黑白：瑞士单色网格风、锐利细线与克制中性灰。 */
+const MINIMAL_THEME: RenderTheme = {
+  ...WECHAT_BASE_THEME,
+  id: 'wechat-minimal',
+  container: `font-family:${DEFAULT_ARTICLE_FONT};font-size:16px;line-height:1.92;color:#141414;letter-spacing:0.015em;word-break:break-word;`,
+  paragraph: 'margin:0 0 21px;',
+  blockquoteParagraph: 'margin:0 0 16px;',
+  heading: (level, degraded) => {
+    if (degraded) {
+      return `font-family:${DEFAULT_ARTICLE_FONT};margin:24px 0 10px;font-size:16px;font-weight:700;line-height:1.55;color:#141414;`
+    }
+    switch (level) {
+      case 1:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:0 0 28px;padding:0 0 12px;border-bottom:2px solid #141414;font-size:23px;font-weight:700;line-height:1.45;letter-spacing:0.02em;color:#141414;`
+      case 2:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:34px 0 16px;padding:0 0 8px;border-bottom:2px solid #141414;font-size:19px;font-weight:700;line-height:1.5;letter-spacing:0.02em;color:#141414;`
+      case 3:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:24px 0 10px;padding:0 0 4px;border-bottom:1px solid #d4d4d4;font-size:16.5px;font-weight:700;line-height:1.55;color:#141414;`
+      default:
+        return `font-family:${DEFAULT_ARTICLE_FONT};margin:20px 0 8px;font-size:15.5px;font-weight:700;line-height:1.55;color:#141414;`
+    }
+  },
+  blockquote:
+    'margin:0 0 22px;padding:4px 0 4px 18px;border-left:2px solid #141414;background-color:transparent;color:#3a3a3a;font-size:15.5px;line-height:1.9;',
+  unorderedList: 'margin:0 0 20px;padding-left:20px;',
+  orderedList: 'margin:0 0 20px;padding-left:20px;',
+  listItem: 'margin:0 0 8px;',
+  codeBlock: `margin:0 0 22px;padding:16px 18px;border:1px solid #d9d9d9;border-radius:2px;background-color:#f5f5f5;font-family:${MONO_STACK};font-size:13px;line-height:1.78;color:#141414;white-space:pre-wrap;word-break:break-word;overflow-x:auto;`,
+  inlineCode: `font-family:${MONO_STACK};font-size:13.5px;background-color:#efefef;color:#141414;padding:2px 5px;border-radius:2px;`,
+  inlineCodeDegraded: `font-family:${MONO_STACK};font-size:13.5px;color:#141414;`,
+  table: 'border-collapse:collapse;width:100%;margin:28px 0;border-top:2px solid #141414;border-bottom:2px solid #141414;font-size:14px;line-height:1.75;',
+  tableHeadCell:
+    'border:none;border-bottom:2px solid #141414;background-color:#f2f2f2;padding:10px 12px;text-align:left;font-weight:700;color:#141414;',
+  tableCell: 'border:none;border-bottom:1px solid #dcdcdc;padding:10px 12px;color:#262626;vertical-align:top;',
+  image: 'max-width:100%;height:auto;display:block;margin:24px auto;border-radius:0;',
+  link: 'color:#141414;text-decoration:underline;word-break:break-all;',
+  strong: 'font-weight:700;font-style:normal;color:#141414;border-bottom:1px solid #141414;padding-bottom:1px;',
+  highlight: 'background-color:#e4e4e4;color:inherit;',
+  thematicBreak: 'border:none;border-top:1px solid #141414;width:28%;margin:32px auto;height:0;',
+  imageMarker:
+    'display:block;margin:0 0 20px;padding:12px 16px;border:1px dashed #666666;border-radius:2px;background-color:#f5f5f5;color:#262626;font-size:14px;line-height:1.6;',
+}
+
 export const DEFAULT_WECHAT_TEMPLATE_ID: WechatTemplateId = 'classic'
+
+export const WECHAT_TEMPLATE_CATEGORIES = [
+  {
+    id: 'opinion',
+    name: '观点长文',
+    description: '深度评论、专栏与叙事长文',
+  },
+  {
+    id: 'briefing',
+    name: '资讯简报',
+    description: '速读要点、行业快讯与周期通讯',
+  },
+  {
+    id: 'lifestyle',
+    name: '生活随笔',
+    description: '日常记录、散文手记与轻阅读',
+  },
+  {
+    id: 'knowledge',
+    name: '知识干货',
+    description: '技术专栏、操作手册与方法论',
+  },
+] as const satisfies readonly {
+  readonly id: WechatTemplateCategoryId
+  readonly name: string
+  readonly description: string
+}[]
 
 export const WECHAT_TEMPLATES = [
   {
     id: 'classic',
+    category: 'opinion',
     name: '观点蓝调',
     description: '墨蓝章节标题、清晰的小标题与原生列表；章节样式随平台调整。',
     theme: WECHAT_THEME,
   },
   {
     id: 'airy',
+    category: 'lifestyle',
     name: '清爽留白',
     description: '大留白、细线小标题，重点句只留一道下划线，适合轻阅读。',
     theme: AIRY_THEME,
   },
   {
     id: 'brief',
+    category: 'briefing',
     name: '内容简报',
     description: '紧凑段落与蓝条小标题，信息密度高，适合要点型内容。',
     theme: BRIEF_THEME,
   },
   {
     id: 'editorial',
+    category: 'opinion',
     name: '杂志长文',
     description: '衬线正文、首行缩进与双线居中标题，适合需要仪式感的深度长文。',
     theme: EDITORIAL_THEME,
   },
   {
     id: 'warm',
+    category: 'lifestyle',
     name: '暖纸手记',
     description: '暖纸底、米色卡片与虚线分隔，适合随笔与手记。',
     theme: WARM_THEME,
   },
   {
     id: 'technical',
+    category: 'knowledge',
     name: '技术专栏',
     description: '左条小标题、强调代码框与网格表格，适合技术类内容。',
     theme: TECHNICAL_THEME,
   },
+  {
+    id: 'ink',
+    category: 'opinion',
+    name: '水墨国风',
+    description: '黛青墨韵、书卷气细线标题与素笺引文，适合文化评论与长篇随笔。',
+    theme: INK_THEME,
+  },
+  {
+    id: 'newsletter',
+    category: 'briefing',
+    name: '深度周刊',
+    description: '深靛蓝左侧色标与卡片引文，节奏分明，适合周报与行业通讯。',
+    theme: NEWSLETTER_THEME,
+  },
+  {
+    id: 'vermilion',
+    category: 'briefing',
+    name: '朱砂快讯',
+    description: '克制朱砂红导语条与快讯标题，重点突出，适合热点解读与公告。',
+    theme: VERMILION_THEME,
+  },
+  {
+    id: 'forest',
+    category: 'lifestyle',
+    name: '森系轻读',
+    description: '松林绿圆润标题与薄荷浅底引文，段距舒展，适合生活方式与游记。',
+    theme: FOREST_THEME,
+  },
+  {
+    id: 'handbook',
+    category: 'knowledge',
+    name: '操作手册',
+    description: '琥珀棕步骤标题、提示卡片与清晰网格表，适合教程与 SOP 指南。',
+    theme: HANDBOOK_THEME,
+  },
+  {
+    id: 'minimal',
+    category: 'knowledge',
+    name: '极简黑白',
+    description: '瑞士单色网格、锐利细线与中性浅灰代码框，克制呈现信息结构。',
+    theme: MINIMAL_THEME,
+  },
 ] as const satisfies readonly {
   readonly id: WechatTemplateId
+  readonly category: WechatTemplateCategoryId
   readonly name: string
   readonly description: string
   readonly theme: RenderTheme

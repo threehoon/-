@@ -4,7 +4,7 @@ import { parseDocument } from '@/core/markdown/parse'
 import { ARTICLE_SOURCE_ATTR } from '@/core/render/source-markers'
 import type { WechatTemplateId } from '@/core/types'
 import { createWechatPlatform } from './adapter'
-import { DEFAULT_WECHAT_TEMPLATE_ID, WECHAT_TEMPLATES, WECHAT_THEME } from './theme'
+import { DEFAULT_WECHAT_TEMPLATE_ID, WECHAT_TEMPLATE_CATEGORIES, WECHAT_TEMPLATES, WECHAT_THEME } from './theme'
 
 const SAMPLE = '# 标题\n\n正文 **强调**、*斜体*、~~删除~~ 和 `code`。\n\n# 正文一级\n\n## 二级\n\n### 三级\n\n#### 四级\n\n##### 五级\n\n###### 六级\n\n> 引用\n\n---\n\n- 项目\n\n1. 顺序\n\n```ts\nconst value = "<safe>"\n```\n\n| 名称 | 数量 |\n| --- | ---: |\n| 苹果 | 3 |\n\n[链接](https://example.com)\n\n![图片](https://example.com/a.png)'
 
@@ -31,24 +31,68 @@ function withoutStyles(html: string): string {
   return container.innerHTML
 }
 
+function parseHex(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '')
+  const full = clean.length === 3 ? clean.split('').map((ch) => ch + ch).join('') : clean
+  return [
+    Number.parseInt(full.slice(0, 2), 16),
+    Number.parseInt(full.slice(2, 4), 16),
+    Number.parseInt(full.slice(4, 6), 16),
+  ]
+}
+
+function luminance(hex: string): number {
+  const [r, g, b] = parseHex(hex).map((channel) => {
+    const value = channel / 255
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+function contrastRatio(fg: string, bg: string): number {
+  const l1 = luminance(fg)
+  const l2 = luminance(bg)
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+}
+
+function readColor(style: string, prop: 'color' | 'background-color'): string | null {
+  const pattern = prop === 'color' ? /(?:^|;)\s*color:\s*(#[0-9a-fA-F]{3,6})/ : /background-color:\s*(#[0-9a-fA-F]{3,6})/
+  return style.match(pattern)?.[1] ?? null
+}
+
 describe('公众号模板目录', () => {
-  it('导出 UI 可直接使用的六套名称、说明与 RenderTheme', () => {
+  it('导出 UI 可直接使用的十二套分类模板、名称、说明与 RenderTheme', () => {
     expect(DEFAULT_WECHAT_TEMPLATE_ID).toBe('classic')
+    expect(WECHAT_TEMPLATE_CATEGORIES.map(({ id }) => id)).toEqual([
+      'opinion', 'briefing', 'lifestyle', 'knowledge',
+    ])
+    expect(WECHAT_TEMPLATE_CATEGORIES.map(({ name }) => name)).toEqual([
+      '观点长文', '资讯简报', '生活随笔', '知识干货',
+    ])
     expect(WECHAT_TEMPLATES.map(({ id }) => id)).toEqual([
       'classic', 'airy', 'brief', 'editorial', 'warm', 'technical',
+      'ink', 'newsletter', 'vermilion', 'forest', 'handbook', 'minimal',
     ])
     expect(WECHAT_TEMPLATES.map(({ name }) => name)).toEqual([
       '观点蓝调', '清爽留白', '内容简报', '杂志长文', '暖纸手记', '技术专栏',
+      '水墨国风', '深度周刊', '朱砂快讯', '森系轻读', '操作手册', '极简黑白',
     ])
     expect(WECHAT_TEMPLATES[0].theme).toBe(WECHAT_THEME)
-    expect(new Set(WECHAT_TEMPLATES.map(({ theme }) => theme.id)).size).toBe(6)
-    for (const { description, theme } of WECHAT_TEMPLATES) {
+    expect(new Set(WECHAT_TEMPLATES.map(({ theme }) => theme.id)).size).toBe(12)
+
+    const categoryIds = new Set(WECHAT_TEMPLATE_CATEGORIES.map(({ id }) => id))
+    for (const category of WECHAT_TEMPLATE_CATEGORIES) {
+      expect(category.description.length).toBeGreaterThan(0)
+      expect(WECHAT_TEMPLATES.filter((template) => template.category === category.id).length).toBeGreaterThanOrEqual(3)
+    }
+    for (const { category, description, theme } of WECHAT_TEMPLATES) {
+      expect(categoryIds.has(category)).toBe(true)
       expect(description.length).toBeGreaterThan(0)
       expect(theme.wrapperTag).toBe('section')
     }
   })
 
-  it('六版在标题、段落、引用、分隔线、代码与表格上都有独立版式', () => {
+  it('十二版在标题、段落、引用、分隔线、代码与表格上都有独立版式', () => {
     const styles = WECHAT_TEMPLATES.map(({ theme }) => ({
       heading: theme.heading(2, false),
       paragraph: theme.paragraph,
@@ -60,13 +104,44 @@ describe('公众号模板目录', () => {
       tableCell: theme.tableCell,
     }))
     for (const key of Object.keys(styles[0]) as (keyof typeof styles[number])[]) {
-      expect(new Set(styles.map((style) => style[key])).size, key).toBe(6)
+      expect(new Set(styles.map((style) => style[key])).size, key).toBe(12)
     }
     expect(WECHAT_TEMPLATES.find(({ id }) => id === 'airy')?.theme.heading(2, false)).toContain('border-bottom:1px solid #e6e8ef')
     expect(WECHAT_TEMPLATES.find(({ id }) => id === 'brief')?.theme.heading(2, false)).toContain('background-color:#eef3fd')
     expect(WECHAT_TEMPLATES.find(({ id }) => id === 'editorial')?.theme.paragraph).toContain('text-indent:2em')
     expect(WECHAT_TEMPLATES.find(({ id }) => id === 'warm')?.theme.container).toContain('background-color:#fdfaf4')
     expect(WECHAT_TEMPLATES.find(({ id }) => id === 'technical')?.theme.codeBlock).toContain('border-top:3px solid')
+    expect(WECHAT_TEMPLATES.find(({ id }) => id === 'ink')?.theme.heading(2, false)).toContain('#1f3d36')
+    expect(WECHAT_TEMPLATES.find(({ id }) => id === 'newsletter')?.theme.blockquote).toContain('#f4f5fc')
+    expect(WECHAT_TEMPLATES.find(({ id }) => id === 'vermilion')?.theme.heading(2, false)).toContain('#a82c22')
+    expect(WECHAT_TEMPLATES.find(({ id }) => id === 'forest')?.theme.blockquote).toContain('#f2f8f5')
+    expect(WECHAT_TEMPLATES.find(({ id }) => id === 'handbook')?.theme.heading(2, false)).toContain('#8a4b08')
+    expect(WECHAT_TEMPLATES.find(({ id }) => id === 'minimal')?.theme.codeBlock).toContain('#f5f5f5')
+  })
+
+  it.each(WECHAT_TEMPLATES)('$name 的正文与核心组件满足对比度与草稿安全样式要求', ({ theme }) => {
+    const surfaceBg = readColor(theme.container, 'background-color') ?? '#ffffff'
+    const bodyFg = readColor(theme.container, 'color')
+    expect(bodyFg).not.toBeNull()
+    expect(contrastRatio(bodyFg!, surfaceBg)).toBeGreaterThanOrEqual(7)
+
+    const checks: ReadonlyArray<readonly [string, string]> = [
+      ['h2', theme.heading(2, false)],
+      ['h3', theme.heading(3, false)],
+      ['blockquote', theme.blockquote],
+      ['codeBlock', theme.codeBlock],
+      ['inlineCode', theme.inlineCode],
+      ['strong', theme.strong],
+      ['link', theme.link],
+      ['tableHeadCell', theme.tableHeadCell],
+      ['tableCell', theme.tableCell],
+    ]
+    for (const [label, style] of checks) {
+      expect(style, label).not.toMatch(/\\|\/\*|(?:url|image-set|image|expression|attr|var)\s*\(|@import/i)
+      const fg = readColor(style, 'color') ?? bodyFg!
+      const bg = readColor(style, 'background-color') ?? surfaceBg
+      expect(contrastRatio(fg, bg), `${theme.id}:${label}`).toBeGreaterThanOrEqual(4.5)
+    }
   })
 })
 

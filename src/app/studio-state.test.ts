@@ -10,8 +10,10 @@ import {
   createInitialState,
   isEmptyDraft,
   isStale,
+  isSyncedBodyPatch,
   selectActiveDocument,
   selectActiveFailure,
+  selectActiveTemplate,
   selectCopyBlockReason,
   selectPlatformResult,
   selectPatchBlockReason,
@@ -445,5 +447,131 @@ describe('工作台状态机 · 平台切换', () => {
     const state = typedState()
     const same = runEvents([{ type: 'platform/changed', platform: 'wechat' }], state)
     expect(same).toBe(state)
+  })
+})
+
+describe('工作台状态机 · 联动与换版权限', () => {
+  it('同步联动补丁允许换版，脱离后的手动改动与非联动改动继续拦截', () => {
+    const base = typedState()
+    const syncedPatch = {
+      html: '<p>同步正文</p>',
+      plainText: '同步正文',
+      baseline: { html: '<p>同步正文</p>', warnings: [] },
+      linkedMarkdown: '同步正文',
+    }
+    const detachedPatch = {
+      html: '<p>目标手动改动</p>',
+      plainText: '目标手动改动',
+      baseline: { html: '<p>同步正文</p>', warnings: [] },
+      linkedMarkdown: '同步正文',
+    }
+    const manualPatch = {
+      html: '<p>非联动改动</p>',
+      plainText: '非联动改动',
+      baseline: { html: '<p>正文段落</p>', warnings: [] },
+    }
+
+    expect(isSyncedBodyPatch(undefined)).toBe(false)
+    expect(isSyncedBodyPatch(syncedPatch)).toBe(true)
+    expect(isSyncedBodyPatch(detachedPatch)).toBe(false)
+    expect(isSyncedBodyPatch(manualPatch)).toBe(false)
+
+    const syncedActive: StudioState = {
+      ...base,
+      platform: 'toutiao',
+      bodyPatches: { toutiao: syncedPatch },
+      liveLink: { source: 'wechat', targets: ['toutiao'], error: null },
+    }
+    expect(selectTemplateEditConflict(syncedActive)).toBeNull()
+
+    const syncedStopped: StudioState = { ...syncedActive, liveLink: null }
+    expect(selectTemplateEditConflict(syncedStopped)).toBeNull()
+
+    const detachedTarget: StudioState = {
+      ...base,
+      platform: 'toutiao',
+      bodyPatches: { toutiao: detachedPatch },
+      liveLink: null,
+    }
+    expect(selectTemplateEditConflict(detachedTarget)).toContain('手动正文改动')
+
+    const nonLinkedManual: StudioState = {
+      ...base,
+      bodyPatches: { wechat: manualPatch },
+      liveLink: null,
+    }
+    expect(selectTemplateEditConflict(nonLinkedManual)).toContain('手动正文改动')
+  })
+
+  it('活动联动来源无报错时允许尝试换版，有转换错误时拦截', () => {
+    const base = typedState()
+    const sourcePatch = {
+      html: '<p>来源编辑正文</p>',
+      plainText: '来源编辑正文',
+      baseline: { html: '<p>正文段落</p>', warnings: [] },
+    }
+    const okSource: StudioState = {
+      ...base,
+      bodyPatches: { wechat: sourcePatch },
+      liveLink: { source: 'wechat', targets: ['toutiao'], error: null },
+    }
+    expect(selectTemplateEditConflict(okSource)).toBeNull()
+
+    const erroredSource: StudioState = {
+      ...okSource,
+      liveLink: { source: 'wechat', targets: ['toutiao'], error: '本次正文未同步' },
+    }
+    expect(selectTemplateEditConflict(erroredSource)).toContain('无法无损转换')
+  })
+
+  it('template/applied 携带 bodyPatch 时同时更新同步正文与基准稿并保留 liveLink', () => {
+    const base = typedState()
+    if (!base.report) throw new Error('测试需要先排版')
+    const syncedPatch = {
+      html: '<p>同步正文</p>',
+      plainText: '同步正文',
+      baseline: { html: '<p>同步正文</p>', warnings: [] },
+      linkedMarkdown: '同步正文',
+    }
+    const state: StudioState = {
+      ...base,
+      platform: 'toutiao',
+      bodyPatches: { toutiao: syncedPatch },
+      liveLink: { source: 'wechat', targets: ['toutiao'], error: null },
+    }
+    const styledBase = makeDocument('toutiao', { html: '<section style="color:#141414"><p>正文段落</p></section>' })
+
+    // 缺少 bodyPatch 时不允许静默丢弃已有同步补丁。
+    const rejected = studioReducer(state, {
+      type: 'template/applied',
+      platform: 'toutiao',
+      template: 'minimal',
+      baselineReport: base.report,
+      revision: state.revision,
+      document: styledBase,
+    })
+    expect(rejected).toBe(state)
+
+    const nextPatch = {
+      html: '<section style="color:#141414"><p>同步正文</p></section>',
+      plainText: '同步正文',
+      baseline: { html: '<section style="color:#141414"><p>同步正文</p></section>', warnings: [] },
+      linkedMarkdown: '同步正文',
+    }
+    const applied = studioReducer(state, {
+      type: 'template/applied',
+      platform: 'toutiao',
+      template: 'minimal',
+      baselineReport: base.report,
+      revision: state.revision,
+      document: styledBase,
+      bodyPatch: nextPatch,
+    })
+    expect(selectActiveTemplate(applied)).toBe('minimal')
+    expect(applied.liveLink).toEqual(state.liveLink)
+    expect(applied.bodyPatches.toutiao).toEqual(nextPatch)
+    expect(selectActiveDocument(applied)?.html).toBe(nextPatch.html)
+    const baseResult = selectPlatformResult(applied, 'toutiao')?.outcome
+    expect(baseResult?.ok && baseResult.document.html).toBe(styledBase.html)
   })
 })

@@ -864,4 +864,140 @@ describe('工作台整页流程', () => {
     expect(confirm).not.toHaveBeenCalled()
     expect(copy).toHaveBeenCalledOnce()
   })
+
+  it('开启实时联动后，目标平台与可无损映射的来源平台均可切换模板，手动脱离后继续受保护', async () => {
+    const showModalDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal')
+    const closeDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close')
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      configurable: true,
+      writable: true,
+      value(this: HTMLDialogElement) {
+        this.setAttribute('open', '')
+      },
+    })
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+      configurable: true,
+      writable: true,
+      value(this: HTMLDialogElement) {
+        this.removeAttribute('open')
+      },
+    })
+
+    try {
+      renderApp()
+      typeSource('# 原稿标题\n\n## 章节标题\n\n第一段正文。')
+      await typesetWithShortcut()
+
+      // 在知乎改标题与正文后开启实时联动到搜狐号和百家号
+      act(() => document.getElementById('platform-tab-zhihu')?.click())
+      act(() => buttonByText('编辑正文').click())
+      act(() => setValue(titleField(), '联动后的标题'))
+      const zhihuEditor = container.querySelector('.article[contenteditable]')
+      if (!zhihuEditor) throw new Error('找不到知乎成稿编辑器')
+      act(() => {
+        const firstParagraph = zhihuEditor.querySelector('p')
+        if (!firstParagraph) throw new Error('找不到知乎正文段落')
+        firstParagraph.textContent = '知乎联动编辑后的正文。'
+        zhihuEditor.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      act(() => buttonByText('实时联动').click())
+      const dialog = container.querySelector('dialog.live-link-dialog')
+      if (!dialog) throw new Error('找不到实时联动弹窗')
+      const chooseTarget = (label: string) => {
+        const option = Array.from(dialog.querySelectorAll('label')).find((node) => node.textContent?.includes(label))
+        const checkbox = option?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+        if (!checkbox) throw new Error(`找不到联动目标：${label}`)
+        act(() => checkbox.click())
+      }
+      chooseTarget('搜狐号')
+      chooseTarget('百家号')
+      act(() => buttonByText('开始联动').click())
+      expect(buttonByText('联动中 · 2 个平台')).toBeTruthy()
+
+      // 切到搜狐号（联动目标）并在常规视图切换为「水墨国风」
+      act(() => document.getElementById('platform-tab-sohu')?.click())
+      expect(queryText('.article-title')).toBe('联动后的标题')
+      expect(queryText('.article')).toContain('知乎联动编辑后的正文。')
+      expect(templateChoice('水墨国风').disabled).toBe(false)
+      act(() => templateChoice('水墨国风').click())
+      expect(templateChoice('水墨国风').getAttribute('aria-pressed')).toBe('true')
+      expect(container.querySelector('.article section')?.getAttribute('style')).toContain('#1d2624')
+      expect(queryText('.article')).toContain('知乎联动编辑后的正文。')
+      expect(queryText('.article-title')).toBe('联动后的标题')
+      expect(buttonByText('跟随知乎')).toBeTruthy()
+
+      // 在专注编辑模式下对联动目标继续换版为「暖纸手记」
+      act(() => buttonByText('专注编辑').click())
+      expect(templateChoice('暖纸手记').disabled).toBe(false)
+      act(() => templateChoice('暖纸手记').click())
+      expect(templateChoice('暖纸手记').getAttribute('aria-pressed')).toBe('true')
+      expect(container.querySelector('.article section')?.getAttribute('style')).toContain('#fdfaf4')
+      expect(titleField().value).toBe('联动后的标题')
+      act(() => buttonByText('退出专注').click())
+
+      // 回到来源平台知乎，可无损映射时也能换版为「极简黑白」，且后续编辑继续沿用搜狐号「暖纸手记」
+      act(() => document.getElementById('platform-tab-zhihu')?.click())
+      expect(templateChoice('极简黑白').disabled).toBe(false)
+      act(() => templateChoice('极简黑白').click())
+      expect(templateChoice('极简黑白').getAttribute('aria-pressed')).toBe('true')
+      expect(container.querySelector('.article section')?.getAttribute('style')).toContain('#141414')
+
+      act(() => buttonByText('编辑正文').click())
+      const nextZhihuEditor = container.querySelector('.article[contenteditable]')
+      if (!nextZhihuEditor) throw new Error('换版后找不到知乎成稿编辑器')
+      act(() => {
+        const firstParagraph = nextZhihuEditor.querySelector('p')
+        if (!firstParagraph) throw new Error('换版后找不到知乎正文段落')
+        firstParagraph.textContent = '知乎换版后继续同步的正文。'
+        nextZhihuEditor.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      act(() => document.getElementById('platform-tab-sohu')?.click())
+      expect(queryText('.article')).toContain('知乎换版后继续同步的正文。')
+      expect(container.querySelector('.article section')?.getAttribute('style')).toContain('#fdfaf4')
+
+      // Markdown 对联动目标可以省略字体字号，但来源换版应保留当前成稿。
+      act(() => document.getElementById('platform-tab-zhihu')?.click())
+      act(() => buttonByText('专注编辑').click())
+      const styledParagraph = container.querySelector('.article[contenteditable] p')
+      if (!styledParagraph) throw new Error('找不到知乎正文段落')
+      act(() => {
+        styledParagraph.innerHTML = '<span style="font-size:26px">知乎换版后继续同步的正文。</span>'
+        styledParagraph.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      act(() => templateChoice('技术专栏').click())
+      expect(queryText('.wechat-templates__notice[role="alert"]')).toContain('无法保留当前正文')
+      expect(templateChoice('极简黑白').getAttribute('aria-pressed')).toBe('true')
+      expect(container.querySelector<HTMLElement>('.article p span')?.style.fontSize).toBe('26px')
+      act(() => buttonByText('退出专注').click())
+      act(() => document.getElementById('platform-tab-sohu')?.click())
+
+      // 停止联动后，目标平台仍可继续换版
+      act(() => buttonByText('跟随知乎').click())
+      act(() => buttonByText('停止联动').click())
+      expect(templateChoice('森系轻读').disabled).toBe(false)
+      act(() => templateChoice('森系轻读').click())
+      expect(templateChoice('森系轻读').getAttribute('aria-pressed')).toBe('true')
+      expect(container.querySelector('.article section')?.getAttribute('style')).toContain('#1d2b24')
+
+      // 手动编辑搜狐号正文后，换版重新受保护
+      act(() => buttonByText('编辑正文').click())
+      const sohuEditor = container.querySelector('.article[contenteditable]')
+      if (!sohuEditor) throw new Error('找不到搜狐号成稿编辑器')
+      act(() => {
+        const firstParagraph = sohuEditor.querySelector('p')
+        if (!firstParagraph) throw new Error('找不到搜狐号正文段落')
+        firstParagraph.textContent = '搜狐号手动改过的正文。'
+        sohuEditor.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      act(() => buttonByText('完成编辑').click())
+      expect(templateChoice('操作手册').disabled).toBe(true)
+      expect(queryText('.wechat-templates__notice')).toContain('手动正文改动')
+    } finally {
+      if (showModalDescriptor) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', showModalDescriptor)
+      else delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).showModal
+      if (closeDescriptor) Object.defineProperty(HTMLDialogElement.prototype, 'close', closeDescriptor)
+      else delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).close
+    }
+  })
 })

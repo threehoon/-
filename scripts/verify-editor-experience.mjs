@@ -855,7 +855,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
       document.querySelector(`select[aria-label="${name}"]`)?.value === expected
     ), [label, value])
     await expectControl('字体', 'yahei')
-    await expectControl('字号', '18')
+    await expectControl('字号', '16')
     assert.deepEqual(await font.locator('option').allTextContents(), ['字体', '微软雅黑', '黑体', '宋体', '楷体'])
     const p = editor.locator('p').first()
     const wordSize = (locator, word) => locator.evaluate((el, value) => {
@@ -901,7 +901,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
     await expectSource(draft)
     await page.keyboard.press(`${commandKey}+Z`)
     assert.equal(await styled.count(), 0)
-    await expectControl('字号', '18')
+    await expectControl('字号', '16')
     assert.match(await p.innerHTML(), /SimSun/)
     await page.keyboard.press(`${commandKey}+Z`)
     await expectControl('字体', 'yahei')
@@ -919,7 +919,7 @@ export async function verifyEditorExperience({ page, context, source, trigger, c
       getSelection().setBaseAndExtent(before, 1, before, 1)
     })
     await expectControl('字体', 'yahei')
-    await expectControl('字号', '18')
+    await expectControl('字号', '16')
     await selectRenderedWord(p, '在一篇')
     await page.getByText('一份 Markdown，六个平台的正文').click()
     await size.selectOption('72')

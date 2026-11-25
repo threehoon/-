@@ -16,12 +16,14 @@ import type { StudioPorts } from './ports'
 import { readMarkdownFile } from '@/features/source/import-markdown'
 import { censusOf, type ContentCensus } from '@/features/preview/content-census'
 import { assessExternalLinkReview, reassessWarnings } from '@/features/preview/assess'
+import { canRestyleProjectedBody } from '@/core/markdown/project-draft'
 import { stripArticleSourceMarkers } from '@/core/render/source-markers'
 import { reviewPublishDocument, type PublishReviewResult } from '@/core/publish-review/review'
 import {
   createInitialState,
   hasPlatformEdits,
   isEmptyDraft,
+  isSyncedBodyPatch,
   selectActiveDocument,
   selectActiveFailure,
   selectCopyBlockReason,
@@ -37,7 +39,7 @@ import type { BodyPatch, CopyKind, StudioEvent, StudioState, StudioStatus } from
 import { escapeHtml, reasonOf } from './text'
 import { draftChanged, restoreDraft, type DraftStore } from './draft-store'
 import { useDraftPersistence, type DraftStatus } from './use-draft-persistence'
-import { configureLiveLink, followLiveLink } from './live-link'
+import { configureLiveLink, followLiveLink, projectLiveBody, renderPortableBody } from './live-link'
 
 const COPY_NOTICE_MS = 2000
 const NO_WARNINGS: readonly CompatWarning[] = []
@@ -245,17 +247,77 @@ export function useStudio(ports: StudioPorts): StudioApi {
     if (conflict) return conflict
     try {
       const templates = { ...snapshot.platformTemplates, [platform]: template }
-      const report = ports.typeset(typesetInput(ports, snapshot, templates), platformOf(platform))
-      const outcome = report.results.find((entry) => entry.platform === platform)?.outcome
-      if (report.parseError) throw new Error(report.parseError)
-      if (!outcome) throw new Error('没有生成新成稿。')
-      if (!outcome.ok) throw new Error(outcome.failure.reason)
-      if (!hasCopyableBody(outcome.document)) throw new Error('没有生成可复制正文。')
-      const previous = selectPlatformResult(snapshot, platform)?.outcome
-      if (previous?.ok && previous.document.plainText !== outcome.document.plainText) {
-        return '换版会改变正文文字，已保留当前成稿。请核对源稿后再试。'
+      const patch = snapshot.bodyPatches[platform]
+      if (!patch) {
+        const report = ports.typeset(typesetInput(ports, snapshot, templates), platformOf(platform))
+        const outcome = report.results.find((entry) => entry.platform === platform)?.outcome
+        if (report.parseError) throw new Error(report.parseError)
+        if (!outcome) throw new Error('没有生成新成稿。')
+        if (!outcome.ok) throw new Error(outcome.failure.reason)
+        if (!hasCopyableBody(outcome.document)) throw new Error('没有生成可复制正文。')
+        const previous = selectPlatformResult(snapshot, platform)?.outcome
+        if (previous?.ok && previous.document.plainText !== outcome.document.plainText) {
+          return '换版会改变正文文字，已保留当前成稿。请核对源稿后再试。'
+        }
+        dispatch({ type: 'template/applied', platform, template, baselineReport: snapshot.report, revision: snapshot.revision, document: outcome.document })
+      } else {
+        const synced = isSyncedBodyPatch(patch)
+        const portableBody = synced ? patch.linkedMarkdown : projectLiveBody(snapshot, platform)
+        const render = (platformTemplates: StudioState['platformTemplates']) => {
+          const report = renderPortableBody({
+            state: snapshot,
+            platforms: [platform],
+            markdown: portableBody,
+            currentHtml: current.html,
+            platformTemplates,
+            ports,
+          })
+          const outcome = report.results.find((entry) => entry.platform === platform)?.outcome
+          if (report.parseError) throw new Error(report.parseError)
+          if (!outcome) throw new Error('没有生成新成稿。')
+          if (!outcome.ok) throw new Error(outcome.failure.reason)
+          if (!hasCopyableBody(outcome.document)) throw new Error('没有生成可复制正文。')
+          return outcome.document
+        }
+        if (!synced && !canRestyleProjectedBody(current.html, render(snapshot.platformTemplates).html, patch.baseline.html, snapshot.boundAssets)) {
+          return '换版无法保留当前正文的部分格式或结构，已保留成稿。请撤销相关改动后再试。'
+        }
+        const styledDocument = render(templates)
+        if (synced && styledDocument.plainText !== patch.plainText) {
+          return '换版会改变正文文字，已保留当前成稿。请核对源稿后再试。'
+        }
+        const nextPatch: BodyPatch = {
+          html: styledDocument.html,
+          plainText: styledDocument.plainText,
+          baseline: {
+            html: styledDocument.html,
+            warnings: styledDocument.warnings,
+          },
+          linkedMarkdown: portableBody,
+        }
+        const previous = selectPlatformResult(snapshot, platform)?.outcome
+        if (!previous?.ok) throw new Error('没有找到当前平台的基准成稿。')
+        let baseDocument = previous.document
+        try {
+          const baseReport = ports.typeset(typesetInput(ports, snapshot, templates), platformOf(platform))
+          const baseOutcome = baseReport.results.find((entry) => entry.platform === platform)?.outcome
+          if (!baseReport.parseError && baseOutcome?.ok && hasCopyableBody(baseOutcome.document) &&
+            baseOutcome.document.plainText === previous.document.plainText) {
+            baseDocument = baseOutcome.document
+          }
+        } catch {
+          // 源稿基准重排失败时保留旧基准，仍应用已成功重排的同步正文补丁。
+        }
+        dispatch({
+          type: 'template/applied',
+          platform,
+          template,
+          baselineReport: snapshot.report,
+          revision: snapshot.revision,
+          document: baseDocument,
+          bodyPatch: nextPatch,
+        })
       }
-      dispatch({ type: 'template/applied', platform, template, baselineReport: snapshot.report, revision: snapshot.revision, document: outcome.document })
       if (stateRef.current.platformTemplates[platform] !== template) return '稿件已变化，未切换模板。请检查当前成稿后重试。'
       if (noticeTimer.current !== null) {
         window.clearTimeout(noticeTimer.current)

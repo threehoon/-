@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import type { PlatformId } from '@/core/types'
+import type { PlatformId, WechatTemplateId } from '@/core/types'
 import { captureDraft, restoreDraft } from './draft-store'
 import { corePorts } from './core-ports'
-import { configureLiveLink, followLiveLink } from './live-link'
-import { createInitialState, selectActiveDocument, studioReducer, type StudioEvent, type StudioState } from './studio-state'
+import { configureLiveLink, followLiveLink, projectLiveBody, renderPortableBody } from './live-link'
+import {
+  createInitialState,
+  isSyncedBodyPatch,
+  selectActiveDocument,
+  selectPlatformResult,
+  selectTemplateEditConflict,
+  studioReducer,
+  type StudioEvent,
+  type StudioState,
+} from './studio-state'
 
 const markdown = '# 原标题\n\n第一段。\n\n参考[原资料][ref]。\n\n| 栏一 | 栏二 |\n| --- | --- |\n| 甲 | 乙 |\n\n[ref]: https://www.gov.cn/'
 const localImage = 'data:image/png;base64,iVBORw0KGgo='
@@ -144,5 +153,91 @@ describe('成稿实时联动', () => {
     const retypeset = apply(cleared, { type: 'typeset/started' })
     expect(retypeset.liveLink).toBeNull()
     expect(retypeset.bodyPatches.qq).toBe(cleared.bodyPatches.qq)
+  })
+
+  it('联动目标换版后保留同步正文、标题与配图，且后续源端编辑继续沿用目标新模板', () => {
+    function switchTemplate(state: StudioState, template: WechatTemplateId): StudioState {
+      const { platform } = state
+      const current = selectActiveDocument(state)
+      const previous = selectPlatformResult(state, platform)?.outcome
+      if (!state.report || !current || !previous?.ok) throw new Error('Missing draft')
+      expect(selectTemplateEditConflict(state)).toBeNull()
+      const patch = state.bodyPatches[platform]
+      const portableBody = isSyncedBodyPatch(patch) ? patch.linkedMarkdown : projectLiveBody(state, platform)
+      const templates = { ...state.platformTemplates, [platform]: template }
+      const rendered = renderPortableBody({
+        state,
+        platforms: [platform],
+        markdown: portableBody,
+        currentHtml: current.html,
+        platformTemplates: templates,
+        ports: corePorts,
+      })
+      const styled = rendered.results[0]?.outcome
+      if (!styled?.ok) throw new Error('Template render failed')
+      return apply(state, {
+        type: 'template/applied',
+        platform,
+        template,
+        baselineReport: state.report,
+        revision: state.revision,
+        document: previous.document,
+        bodyPatch: {
+          html: styled.document.html,
+          plainText: styled.document.plainText,
+          baseline: { html: styled.document.html, warnings: styled.document.warnings },
+          linkedMarkdown: portableBody,
+        },
+      })
+    }
+
+    let state = configureLiveLink(initial('zhihu'), ['sohu', 'baijiahao'], corePorts)
+    state = rename(state, '联动新标题')
+    state = edit(state, (html) => html.replace('第一段。', `同步后的第一段。<img src="${localImage}" alt="现场图">`))
+
+    // 切到搜狐号切换为暖纸手记
+    state = apply(state, { type: 'platform/changed', platform: 'sohu' })
+    state = switchTemplate(state, 'warm')
+    expect(state.platformTemplates.sohu).toBe('warm')
+    expect(state.liveLink?.targets).toEqual(['sohu', 'baijiahao'])
+    expect(read(state, 'sohu')?.title).toBe('联动新标题')
+    expect(read(state, 'sohu')?.html).toContain('#fdfaf4')
+    expect(read(state, 'sohu')?.html).toContain('同步后的第一段。')
+    expect(read(state, 'sohu')?.html).toContain(`src="${localImage}"`)
+
+    // 回到知乎继续编辑，搜狐号保持暖纸手记，百家号保持默认版
+    state = apply(state, { type: 'platform/changed', platform: 'zhihu' })
+    state = edit(state, (html) => html.replace('同步后的第一段。', '再次联动正文。'))
+    expect(read(state, 'sohu')?.html).toContain('再次联动正文。')
+    expect(read(state, 'sohu')?.html).toContain('#fdfaf4')
+    expect(read(state, 'baijiahao')?.html).toContain('再次联动正文。')
+    expect(read(state, 'baijiahao')?.html).not.toContain('#fdfaf4')
+
+    // 来源平台（知乎）在可无损转换时也可以切换模板，不影响目标模板且继续联动
+    state = switchTemplate(state, 'ink')
+    expect(state.platformTemplates.zhihu).toBe('ink')
+    expect(state.platformTemplates.sohu).toBe('warm')
+    expect(read(state, 'zhihu')?.html).toContain('#1d2624')
+    state = edit(state, (html) => html.replace('再次联动正文。', '来源换版后再改。'))
+    expect(read(state, 'sohu')?.html).toContain('来源换版后再改。')
+    expect(read(state, 'sohu')?.html).toContain('#fdfaf4')
+
+    // 停止联动并经草稿持久化恢复后，目标平台仍可继续切换模板
+    const stopped = configureLiveLink(state, [], corePorts)
+    const restored = restoreDraft(captureDraft(stopped, new Map()), createInitialState({ platform: 'wechat' }), new Map())
+    const onSohu = apply(restored, { type: 'platform/changed', platform: 'sohu' })
+    expect(selectTemplateEditConflict(onSohu)).toBeNull()
+    const switchedAgain = switchTemplate(onSohu, 'forest')
+    expect(switchedAgain.platformTemplates.sohu).toBe('forest')
+    expect(read(switchedAgain, 'sohu')?.html).toContain('#1d2b24')
+    expect(read(switchedAgain, 'sohu')?.html).toContain('来源换版后再改。')
+  })
+
+  it('不可无损转换的联动来源禁止换版，保护当前成稿', () => {
+    const linked = configureLiveLink(initial('baijiahao'), ['zhihu'], corePorts)
+    const lossy = edit(linked, (html) => html.replace('原资料', '改过的链接文字'))
+    expect(lossy.liveLink?.error).toContain('无法无损转换')
+    expect(selectTemplateEditConflict(lossy)).toContain('无法无损转换')
+    expect(() => projectLiveBody(lossy, 'baijiahao')).toThrow(/无法无损转换/)
   })
 })

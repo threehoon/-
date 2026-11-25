@@ -79,57 +79,12 @@ function sizeMarkers(article: HTMLElement): HTMLElement[] {
     .filter(({ style }) => style.fontSize === 'x-small')
 }
 
-function styleCheckpoint(owner: Document, html: string): string {
-  const template = owner.createElement('template')
-  template.innerHTML = html
-  // The browser may reserialize declarations on undo; compare CSS values, not property order or spacing.
-  for (const element of template.content.querySelectorAll<HTMLElement>('[style]')) {
-    const properties = Array.from(element.style).sort().map((key) => [
-      key, element.style.getPropertyValue(key), element.style.getPropertyPriority(key),
-    ])
-    if (properties.length) element.setAttribute('style', JSON.stringify(properties))
-    else element.removeAttribute('style')
-  }
-  return template.innerHTML
-}
-
-/** Use the native formatting operation to keep links, blocks and the browser's undo transaction intact. */
-export class FontSizeHistory {
-  private readonly sizes = new Map<string, number>()
-  private readonly replay: (number | undefined)[] = []
-
-  private key(owner: Document, before: string, after: string): string {
-    return JSON.stringify([styleCheckpoint(owner, before), styleCheckpoint(owner, after)])
-  }
-
-  apply(article: HTMLElement, size: number): boolean {
-    if (!Number.isInteger(size) || size < 12 || size > 72) return false
-    const before = article.innerHTML
-    // The native fontSize command only accepts HTML levels (1–7). Convert its reserved keyword
-    // to the chosen pixel size before publishing the edit to preview or clipboard.
-    if (!runNativeTextStyle(article, 'fontSize', '1')) return false
-    const markers = sizeMarkers(article)
-    if (markers.length === 0) return false
-    for (const span of markers) span.style.fontSize = `${size}px`
-    this.sizes.set(this.key(article.ownerDocument, before, article.innerHTML), size)
-    return true
-  }
-
-  onInput(article: HTMLElement, before: string, inputType: string): void {
-    if (inputType === 'historyUndo') {
-      const size = this.sizes.size ? this.sizes.get(this.key(article.ownerDocument, article.innerHTML, before)) : undefined
-      this.replay.push(size)
-    } else if (inputType === 'historyRedo') {
-      // A Chromium redo can restore the original keyword on a span that existed before the edit.
-      const size = this.replay.pop()
-      if (size !== undefined) for (const span of sizeMarkers(article)) span.style.fontSize = `${size}px`
-    } else {
-      this.replay.length = 0
-    }
-  }
-
-  clear(): void {
-    this.sizes.clear()
-    this.replay.length = 0
-  }
+export function applyFontSize(article: HTMLElement, size: number): boolean {
+  if (!Number.isInteger(size) || size < 12 || size > 72) return false
+  // Convert the native font level to the actual pixel size before recording the edit.
+  if (!runNativeTextStyle(article, 'fontSize', '1')) return false
+  const markers = sizeMarkers(article)
+  if (markers.length === 0) return false
+  for (const span of markers) span.style.fontSize = `${size}px`
+  return true
 }

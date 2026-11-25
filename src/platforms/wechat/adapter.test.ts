@@ -31,12 +31,12 @@ describe('公众号适配器', () => {
     expect(platform.capabilityEvidence).toBe('pending-user-trial')
   })
 
-  it('正文样式内联：无衬线 18px / 行高 2 / 墨色', () => {
+  it('正文样式内联：无衬线 16px / 行高 2 / 墨色', () => {
     const { html } = render('正文一段。')
     expect(html.startsWith('<section style="')).toBe(true)
     expect(html).toMatch(/^<section style="font-family:&quot;Microsoft YaHei&quot;/)
     expect(html).toContain('max-width:576px')
-    expect(html).toContain('font-size:18px')
+    expect(html).toContain('font-size:16px')
     expect(html).toContain('line-height:2;')
     expect(html).toContain('color:#1f2023')
     expect(html).toContain('<p style="margin:0 0 20px;">正文一段。</p>')
